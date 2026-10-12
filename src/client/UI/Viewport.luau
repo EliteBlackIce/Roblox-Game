@@ -8,15 +8,18 @@ local Viewport = {}
 
 export type Options = {
 	Silhouette: boolean?, -- black shape for undiscovered things
+	Outline: boolean?, -- ink outline (default on)
 	Yaw: number?, -- degrees around the model
 	Pitch: number?,
 	Zoom: number?, -- >1 moves the camera closer
 }
 
+local INK = Color3.fromRGB(30, 24, 44)
+
 local function blacken(model: Instance)
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.Color = Color3.fromRGB(25, 25, 32)
+			d.Color = INK
 			d.Material = Enum.Material.SmoothPlastic
 		elseif d:IsA("ParticleEmitter") then
 			d.Enabled = false
@@ -57,6 +60,30 @@ function Viewport.new(parent: Instance, model: Model, props: { [string]: any }?,
 	camera.Parent = frame
 	frame.CurrentCamera = camera
 	Viewport.fit(camera, model, opts)
+	if not (opts and opts.Outline == false) then
+		-- Cel-style ink line: an enlarged black copy just behind the model.
+		local lo, hi = Kit.extents(model)
+		local center = (lo + hi) / 2
+		local radius = (hi - lo).Magnitude / 2
+		local away = (center - camera.CFrame.Position).Unit
+		local distance = (center - camera.CFrame.Position).Magnitude
+		local push = radius * 0.6
+		local ink = model:Clone()
+		blacken(ink)
+		for _, d in ink:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.Transparency = 0
+			end
+		end
+		Kit.scale(ink, 1.07 * (distance + push) / distance, center)
+		for _, d in ink:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.CFrame = d.CFrame + away * push
+			end
+		end
+		ink.Name = "Ink"
+		ink.Parent = frame
+	end
 	frame.Parent = parent
 	return frame
 end

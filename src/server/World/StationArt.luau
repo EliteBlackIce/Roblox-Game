@@ -40,6 +40,7 @@ local GREEN = rgb(80, 205, 110)
 -- Interactive models stream in as a whole so prompts and parts arrive together.
 local function atomic(model: Model)
 	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+	CollectionService:AddTag(model, "Outline")
 end
 
 local function hover(target: Instance, spin: number, bob: number)
@@ -139,22 +140,26 @@ local function cottage(m: Model, base: CFrame, wall: Color3, roof: Color3)
 		Kit.cyl(m, at(x - math.sign(x) * 0.1, 8, 3), 2.2, 3.4, WHITE)
 		Kit.cyl(m, at(x - math.sign(x) * 0.15, 8, 3), 2.3, 2.6, rgb(150, 215, 245))
 	end
-	-- Gable roof.
-	for _, side in { -1, 1 } do
-		Kit.wedge(m, at(side * 6.75, 16.25, 2) * ANG(0, rad(-side * 90), 0), Vector3.new(21, 5.5, 13.5), roof, SOLID)
+	-- Soft barrel roof: a fat half-buried cylinder with rounded ends and eaves.
+	Kit.roundBox(m, at(0, 13.8, 2), Vector3.new(27, 1, 21), 0.5, Kit.shade(roof, -0.25), nil, false)
+	Kit.cyl(m, at(0, 14.3, 2), 25, 12, roof, SOLID)
+	for _, x in { -12.6, 12.6 } do
+		Kit.cyl(m, at(x, 14.3, 2), 1, 12.6, Kit.shade(roof, -0.15))
 	end
-	Kit.roundBox(m, at(0, 13.8, 2), Vector3.new(28, 0.8, 22), 0.4, Kit.shade(roof, -0.25), nil, false)
-	Kit.cylY(m, at(0, 19.1, 2) * ANG(rad(90), 0, 0), 21.5, 1.2, Kit.shade(roof, 0.2))
+	for i = -2, 2 do
+		Kit.cyl(m, at(i * 5, 20.1, 2), 0.8, 1.2, Kit.shade(roof, 0.2))
+	end
 	-- Chimney with a puff of smoke.
-	Kit.roundBox(m, at(7, 19, 7), Vector3.new(2.4, 5, 2.4), 0.4, rgb(200, 95, 80), nil, false)
-	Kit.ball(m, at(7.4, 22.6, 7), 2.2, rgb(235, 235, 240), { Transparency = 0.2 })
-	Kit.ball(m, at(8.4, 24.2, 7.4), 1.6, rgb(235, 235, 240), { Transparency = 0.35 })
+	Kit.cylY(m, at(7, 20.5, 7), 5, 2.4, rgb(200, 95, 80))
+	Kit.ring(m, at(7, 23, 7), 1.2, 0.5, Kit.shade(rgb(200, 95, 80), -0.2), 10)
+	Kit.ball(m, at(7.4, 24.4, 7), 2.2, rgb(240, 240, 245), { Transparency = 0.2 })
+	Kit.ball(m, at(8.4, 26, 7.4), 1.6, rgb(240, 240, 245), { Transparency = 0.35 })
 	-- Striped scalloped awning.
 	for i = 0, 7 do
 		local x = -10.5 + i * 3
 		local color = if i % 2 == 0 then WHITE else rgb(255, 120, 120)
-		Kit.wedge(m, at(x, 11.6, -8.8) * ANG(0, rad(180), 0), Vector3.new(3, 2.2, 3.6), color)
-		Kit.ball(m, at(x, 10.4, -10.4), 1.6, color)
+		Kit.cyl(m, at(x, 11.7, -9.0) * ANG(0, rad(90), 0) * ANG(rad(-20), 0, 0), 3.4, 2.4, color)
+		Kit.ball(m, at(x, 10.5, -10.5), 1.8, color)
 	end
 	-- Counter.
 	Kit.roundBox(m, at(0, 1.9, -4), Vector3.new(15, 3.2, 2.6), 0.5, WOOD, SOLID, false)

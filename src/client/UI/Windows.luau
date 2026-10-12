@@ -73,7 +73,7 @@ function Windows.create(name: string, title: string, color: Color3, size: Vector
 
 	local header = Theme.create("Frame", {
 		Name = "Header",
-		Size = UDim2.new(1, 0, 0, 44),
+		Size = UDim2.new(1, 0, 0, 50),
 		BackgroundColor3 = color,
 		Parent = window,
 	}, { Theme.corner(12), Theme.stroke(3), Theme.gloss(0.3) })
@@ -83,8 +83,9 @@ function Windows.create(name: string, title: string, color: Color3, size: Vector
 		Size = UDim2.new(1, -70, 1, 0),
 		Text = title,
 		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.OnColor,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		MaxTextSize = 30,
+		MaxTextSize = 32,
 		Parent = header,
 	})
 	Theme.textStroke().Parent = titleLabel
@@ -102,8 +103,8 @@ function Windows.create(name: string, title: string, color: Color3, size: Vector
 
 	local content = Theme.create("Frame", {
 		Name = "Content",
-		Position = UDim2.fromOffset(0, 54),
-		Size = UDim2.new(1, 0, 1, -54),
+		Position = UDim2.fromOffset(0, 60),
+		Size = UDim2.new(1, 0, 1, -60),
 		BackgroundTransparency = 1,
 		Parent = window,
 	})

@@ -2,6 +2,7 @@
 -- World prop library in the rounded "toy" style. Every function takes a parent
 -- and a ground CFrame (front = -Z / LookVector) and builds an anchored model.
 
+local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Art = ReplicatedStorage.Shared.Art
@@ -25,8 +26,14 @@ local WOOD = rgb(170, 115, 70)
 
 local SOLID = { Collide = true }
 
+local OUTLINED = { Car = true, Crusher = true, BoatWreck = true, Lighthouse = true, UFO = true, RocketWreck = true, Tree = true, Fridge = true, Washer = true, ServerRack = true, Container = true, Barrel = true, Bench = true, LampPost = true }
+
 local function model(parent: Instance, name: string): Model
-	return Kit.model(parent, name)
+	local m = Kit.model(parent, name)
+	if OUTLINED[name] then
+		CollectionService:AddTag(m, "Outline")
+	end
+	return m
 end
 
 -- A giant version of a scrap item, used as a landmark.
@@ -41,6 +48,7 @@ function Props.giant(parent: Instance, itemId: string, cf: CFrame, scale: number
 		end
 	end
 	m.Parent = parent
+	CollectionService:AddTag(m, "Outline")
 	return m
 end
 
@@ -105,7 +113,7 @@ end
 
 function Props.container(parent: Instance, cf: CFrame, color: Color3)
 	local m = model(parent, "Container")
-	Kit.box(m, cf * CN(0, 4.25, 0), Vector3.new(8, 8.5, 20), color, SOLID)
+	Kit.roundBox(m, cf * CN(0, 4.25, 0), Vector3.new(8, 8.5, 20), 0.8, color, SOLID, false)
 	for _, side in { -1, 1 } do
 		for z = -8, 8, 2 do
 			Kit.box(m, cf * CN(side * 4.08, 4.25, z), Vector3.new(0.18, 7.8, 0.7), Kit.shade(color, -0.15))
@@ -245,7 +253,8 @@ function Props.rocket(parent: Instance, cf: CFrame)
 	Kit.cone(m, lying * CN(0, 11, 0), 6, 6, rgb(230, 60, 60), 5)
 	Kit.cylZ(m, lying * CN(0, 4, -3.0), 0.3, 2.2, rgb(130, 200, 240))
 	for _, a in { 0, 120, 240 } do
-		Kit.wedge(m, lying * ANG(0, rad(a), 0) * CN(0, -9, 3.6) * ANG(rad(180), 0, 0), Vector3.new(0.6, 5, 3), rgb(230, 60, 60))
+		local fin = lying * ANG(0, rad(a), 0)
+		Kit.pillBetween(m, (fin * CN(0, -6.5, 2.6)).Position, (fin * CN(0, -10.5, 5.2)).Position, 1.6, rgb(230, 60, 60))
 	end
 	Kit.cylY(m, lying * CN(0, -11.5, 0), 1.5, 4.5, DARK)
 end

@@ -52,6 +52,8 @@ Config.Rarities = {
 	{ Id = "Epic", Name = "Epic", Tier = 3, Color = Color3.fromRGB(185, 95, 255), Announce = false },
 	{ Id = "Legendary", Name = "Legendary", Tier = 4, Color = Color3.fromRGB(255, 175, 40), Announce = true },
 	{ Id = "Mythic", Name = "Mythic", Tier = 5, Color = Color3.fromRGB(255, 70, 130), Announce = true },
+	-- Secret only exists on Scrap Bots: absurdly rare, with its own hatch sequence.
+	{ Id = "Secret", Name = "SECRET", Tier = 6, Color = Color3.fromRGB(255, 255, 255), Announce = true },
 } :: { Rarity }
 
 Config.RarityById = {} :: { [string]: Rarity }

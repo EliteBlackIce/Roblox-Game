@@ -80,6 +80,7 @@ function Notifications.init(screen: ScreenGui)
 		Size = UDim2.fromScale(1, 0.3),
 		MaxTextSize = 20,
 		TextWrapped = true,
+		TextColor3 = Theme.Colors.OnColor,
 		Parent = saleFrame,
 	})
 	Theme.textStroke().Parent = saleDetail
@@ -257,7 +258,7 @@ function Notifications.bigFind(title: string, subtitle: string, color: Color3, m
 	bigLabel.Text = title
 	bigLabel.TextColor3 = color
 	bigSub.Text = subtitle
-	bigSub.TextColor3 = Theme.Colors.Text
+	bigSub.TextColor3 = Theme.Colors.OnColor
 	bigLabel.TextTransparency = 0
 	bigSub.TextTransparency = 0
 	bigScale.Scale = 0.2

@@ -18,6 +18,7 @@ local Hud = require(script.Parent.UI.Hud)
 local Menu = require(script.Parent.UI.Menu)
 local Notifications = require(script.Parent.UI.Notifications)
 local Windows = require(script.Parent.UI.Windows)
+local Outliner = require(script.Parent.Outliner)
 local WorldAnimator = require(script.Parent.WorldAnimator)
 local Screens = script.Parent.UI.Screens
 
@@ -47,11 +48,13 @@ end
 Menu.init(screen, Store.hasItems())
 Gates.init()
 BotFollowers.init()
-WorldAnimator.init(function()
+local function focus(): Vector3?
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	return if root and root:IsA("BasePart") then root.Position else nil
-end)
+end
+WorldAnimator.init(focus)
+Outliner.init(focus)
 
 -- Collect prompts hold for as long as the player's cooldown, so the speed
 -- upgrades are felt directly. The server enforces the real cooldown.

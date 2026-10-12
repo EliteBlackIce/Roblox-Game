@@ -135,7 +135,7 @@ def bounds(parts):
 
 
 def render(parts, size, azimuth=35, elevation=28, background=(236, 240, 247), lo=None, hi=None, shadows=True):
-    parts = [p for p in parts if p.get("t", 0) < 0.6]
+    parts = [p for p in parts if p.get("t", 0) < 0.5]
     if not parts:
         return Image.new("RGB", (size, size), background)
     if lo is None:

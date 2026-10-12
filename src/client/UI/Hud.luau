@@ -159,7 +159,8 @@ function Hud.init(screen: ScreenGui, onRemoteSell: () -> ())
 		Size = UDim2.new(0.6, 0, 0, 32),
 		Text = "",
 		Font = Theme.TitleFont,
-		MaxTextSize = 24,
+		TextColor3 = C.OnColor,
+		MaxTextSize = 26,
 		Parent = screen,
 	})
 	Theme.textStroke(3).Parent = refs.hint
@@ -303,7 +304,7 @@ function Hud.update(state: any)
 		refs.hint.TextColor3 = C.Accent
 	elseif state.Used == 0 and state.TotalEarned == 0 then
 		refs.hint.Text = "Walk up to a scrap pile and hold [E] to collect junk!"
-		refs.hint.TextColor3 = C.Text
+		refs.hint.TextColor3 = C.OnColor
 	else
 		refs.hint.Text = ""
 	end

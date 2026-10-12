@@ -122,8 +122,10 @@ local function fenceRun(folder: Instance, from: Vector3, to: Vector3)
 		local mid = (a + b) / 2
 		local look = CFrame.lookAt(mid, b)
 		local segment = (b - a).Magnitude
-		Builder.part(folder, { Name = "FencePanel", Size = Vector3.new(0.8, 9, segment), CFrame = look + Vector3.new(0, 5, 0), Color = C.Fence })
-		Kit.pill(folder, look * CN(0, 10.2, 0) * ANG(0, rad(90), 0), segment, 1.1, C.Post)
+		Builder.part(folder, { Name = "FenceWall", Size = Vector3.new(0.8, 12, segment), CFrame = look + Vector3.new(0, 6, 0), Color = C.Fence, Transparency = 1 })
+		for _, y in { 3.2, 6.6, 10.0 } do
+			Kit.pill(folder, look * CN(0, y, 0) * ANG(0, rad(90), 0), segment, if y == 10.0 then 1.1 else 0.8, if y == 10.0 then C.Post else C.Fence)
+		end
 		Kit.cylY(folder, CN(a + Vector3.new(0, 5.5, 0)), 11, 1.8, C.Post, { Collide = true })
 		Kit.ball(folder, CN(a + Vector3.new(0, 11.2, 0)), 2.2, Kit.shade(C.Post, 0.15))
 	end
@@ -393,14 +395,17 @@ end
 
 ---------------------------------------------------------------- lighting
 
+-- Toon / cel-shaded lighting: no environment reflections, bright coloured
+-- ambient so shadows stay light and flat, crisp shadow edges, punchy grade.
 function MapBuilder.setupLighting()
-	Lighting.ClockTime = 14
-	Lighting.GeographicLatitude = 25
-	Lighting.Brightness = 3.2
-	Lighting.Ambient = rgb(120, 115, 130)
-	Lighting.OutdoorAmbient = rgb(165, 165, 180)
-	Lighting.EnvironmentDiffuseScale = 0.5
-	Lighting.EnvironmentSpecularScale = 0.3
+	Lighting.ClockTime = 14.2
+	Lighting.GeographicLatitude = 30
+	Lighting.Brightness = 2.4
+	Lighting.Ambient = rgb(150, 140, 175)
+	Lighting.OutdoorAmbient = rgb(175, 170, 200)
+	Lighting.EnvironmentDiffuseScale = 0
+	Lighting.EnvironmentSpecularScale = 0
+	Lighting.ShadowSoftness = 0.08
 	Lighting.GlobalShadows = true
 
 	local function ensure(className: string, name: string): Instance
@@ -415,31 +420,31 @@ function MapBuilder.setupLighting()
 	end
 
 	local sky = ensure("Sky", "Sky") :: Sky
-	sky.SunAngularSize = 16
+	sky.SunAngularSize = 18
 	sky.MoonAngularSize = 9
 
 	local atmosphere = ensure("Atmosphere", "Atmosphere") :: Atmosphere
-	atmosphere.Density = 0.2
-	atmosphere.Offset = 0.1
-	atmosphere.Color = rgb(215, 230, 250)
-	atmosphere.Decay = rgb(150, 175, 220)
-	atmosphere.Glare = 0.15
-	atmosphere.Haze = 0.4
+	atmosphere.Density = 0.12
+	atmosphere.Offset = 0.2
+	atmosphere.Color = rgb(225, 235, 255)
+	atmosphere.Decay = rgb(170, 190, 235)
+	atmosphere.Glare = 0
+	atmosphere.Haze = 0.2
 
 	local bloom = ensure("BloomEffect", "Bloom") :: BloomEffect
-	bloom.Intensity = 0.55
-	bloom.Size = 22
-	bloom.Threshold = 1.25
+	bloom.Intensity = 0.45
+	bloom.Size = 18
+	bloom.Threshold = 1.4
 
 	local color = ensure("ColorCorrectionEffect", "ColorCorrection") :: ColorCorrectionEffect
-	color.Saturation = 0.25
-	color.Contrast = 0.08
-	color.Brightness = 0.03
-	color.TintColor = rgb(255, 252, 246)
+	color.Saturation = 0.32
+	color.Contrast = 0.12
+	color.Brightness = 0.04
+	color.TintColor = rgb(255, 250, 245)
 
 	local rays = ensure("SunRaysEffect", "SunRays") :: SunRaysEffect
-	rays.Intensity = 0.04
-	rays.Spread = 0.5
+	rays.Intensity = 0.02
+	rays.Spread = 0.4
 end
 
 function MapBuilder.build(): Model

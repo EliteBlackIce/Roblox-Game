@@ -298,7 +298,12 @@ end
 CFrame.lookAt = function(pos, target, up)
 	up = up or v3(0, 1, 0)
 	local look = (target - pos).Unit
-	local right = look:Cross(up).Unit
+	local cross = look:Cross(up)
+	if cross.Magnitude < 1e-6 then
+		-- Looking straight up/down: Roblox falls back to another up vector.
+		cross = look:Cross(v3(0, 0, -1))
+	end
+	local right = cross.Unit
 	local upv = right:Cross(look)
 	return cf(pos, { right.X, upv.X, -look.X, right.Y, upv.Y, -look.Y, right.Z, upv.Z, -look.Z })
 end
@@ -308,6 +313,11 @@ CFrameMeta.__index = function(self, k)
 	if k == "Lerp" then
 		return function(a, b, t)
 			return cf(a.p:Lerp(b.p, t), b.r)
+		end
+	end
+	if k == "VectorToWorldSpace" then
+		return function(a, v)
+			return matvec(a.r, v)
 		end
 	end
 	if k == "Inverse" then
@@ -489,7 +499,7 @@ local PROPS = {
 	UITextSizeConstraint = merge({ "MaxTextSize", "MinTextSize" }),
 	UISizeConstraint = merge({ "MinSize", "MaxSize" }),
 	ProximityPrompt = merge({ "ActionText", "ObjectText", "HoldDuration", "MaxActivationDistance", "RequiresLineOfSight", "KeyboardKeyCode", "Enabled", "Style", "UIOffset" }),
-	ParticleEmitter = merge({ "Texture", "Rate", "Lifetime", "Speed", "Size", "LightEmission", "Color", "SpreadAngle", "Acceleration", "EmissionDirection", "Transparency", "Enabled" }),
+	ParticleEmitter = merge({ "Texture", "Rate", "Lifetime", "Speed", "Size", "LightEmission", "Color", "SpreadAngle", "Acceleration", "EmissionDirection", "Transparency", "Enabled", "Drag", "Rotation", "RotSpeed", "LockedToPart", "ZOffset" }),
 	SpotLight = merge({ "Face", "Angle", "Range", "Brightness", "Color", "Shadows", "Enabled" }),
 	PointLight = merge({ "Range", "Brightness", "Color", "Shadows", "Enabled" }),
 	StringValue = merge({ "Value" }),
@@ -521,10 +531,11 @@ local PROPS = {
 	ModuleScript = merge({}),
 	Script = merge({}),
 	LocalScript = merge({}),
-	Lighting = merge({ "ClockTime", "GeographicLatitude", "Brightness", "Ambient", "OutdoorAmbient", "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "GlobalShadows", "Technology" }),
+	Lighting = merge({ "ClockTime", "GeographicLatitude", "Brightness", "Ambient", "OutdoorAmbient", "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "GlobalShadows", "Technology", "ShadowSoftness" }),
+	BlurEffect = merge({ "Size", "Enabled" }),
 	Players = merge({ "CharacterAutoLoads", "RespawnTime", "LocalPlayer" }),
 	Player = merge({ "UserId", "Character", "DisplayName" }),
-	Workspace = merge({}),
+	Workspace = merge({ "CurrentCamera" }),
 }
 
 local EVENTS = {
@@ -752,6 +763,41 @@ function Methods.WaitForChild(self, name)
 		end
 	end
 	error("Infinite yield: WaitForChild(" .. name .. ") on " .. data(self).Name, 2)
+end
+function Methods.Clone(self)
+	local d = data(self)
+	local copy = newInstance(d.ClassName)
+	local cd = data(copy)
+	cd.Name = d.Name
+	for k, v in d.props do
+		cd.props[k] = v
+	end
+	for k, v in d.attributes do
+		cd.attributes[k] = v
+	end
+	for _, child in d.children do
+		Methods.Clone(child).Parent = copy
+	end
+	return copy
+end
+function Methods.ClearAllChildren(self)
+	for _, child in table.clone(data(self).children) do
+		child:Destroy()
+	end
+end
+function Methods.FindFirstChildWhichIsA(self, className, recursive)
+	for _, c in data(self).children do
+		if isA(data(c).ClassName, className) then
+			return c
+		end
+		if recursive then
+			local f = Methods.FindFirstChildWhichIsA(c, className, true)
+			if f then
+				return f
+			end
+		end
+	end
+	return nil
 end
 function Methods.IsA(self, className)
 	return isA(data(self).ClassName, className)
@@ -1069,6 +1115,15 @@ end
 function RunService:IsClient()
 	return M.context == "client"
 end
+function RunService:BindToRenderStep(name, priority, fn)
+	M.renderSteps = M.renderSteps or {}
+	M.renderSteps[name] = fn
+end
+function RunService:UnbindFromRenderStep(name)
+	if M.renderSteps then
+		M.renderSteps[name] = nil
+	end
+end
 function RunService:IsStudio()
 	return true
 end
@@ -1109,6 +1164,14 @@ game = setmetatable({}, {
 	end,
 })
 workspace = services.Workspace
+do
+	local cam = newInstance("Camera")
+	cam.Name = "Camera"
+	data(cam).props.CFrame = CFrame.new(0, 10, 90)
+	data(cam).props.FieldOfView = 70
+	cam.Parent = services.Workspace
+	data(services.Workspace).props.CurrentCamera = cam
+end
 
 -- Players
 function M.addPlayer(name, userId)

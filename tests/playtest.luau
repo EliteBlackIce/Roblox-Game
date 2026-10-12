@@ -59,7 +59,7 @@ check(Formulas.formatNumber(3400000) == "3.4M", "formats M")
 check(Formulas.formatNumber(250000000000) == "250B", "formats B")
 check(#Zones.List == 6 and #Zones.ItemOrder == 42, "6 zones, 42 items")
 check(#Tools == 8, "8 tools")
-check(#Bots.List == 16 and #Bots.Crates == 4, "16 bots in 4 crates")
+check(#Bots.List == 20 and #Bots.Crates == 4, "20 bots (incl. 4 Secrets) in 4 crates")
 for _, crate in Bots.Crates do
 	for _, drop in crate.Drops do
 		assert(Bots.ById[drop.Bot], "crate drop references missing bot " .. drop.Bot)
@@ -521,21 +521,38 @@ end
 check(followerParts > 15, `follower is the detailed bot model ({followerParts} parts)`)
 check(gui:FindFirstChild("HatchOverlay") ~= nil, "hatch overlay exists")
 -- Drive the 3D crate-opening animation frame by frame.
-local sawCrate, sawBot = false, false
-for _ = 1, 160 do
-	S.RunService.RenderStepped:Fire()
-	M.advance(1 / 30)
-	local stage = gui.HatchOverlay.Stage
-	for _, d in stage:GetDescendants() do
-		if d:IsA("Model") and d.Name:sub(1, 6) == "Crate_" then
-			sawCrate = true
-		elseif d:IsA("Model") and Bots.ById[d.Name] then
-			sawBot = true
+local function driveHatch(frames)
+	local sawCrate, sawBot, titles = false, false, {}
+	for _ = 1, frames do
+		S.RunService.RenderStepped:Fire()
+		if M.renderSteps and M.renderSteps.HatchShake then
+			M.renderSteps.HatchShake()
+		end
+		M.advance(1 / 30)
+		local fx = S.Workspace.CurrentCamera:FindFirstChild("HatchFX")
+		if fx then
+			for _, d in fx:GetChildren() do
+				if d:IsA("Model") and d.Name:sub(1, 6) == "Crate_" then
+					sawCrate = true
+				elseif d:IsA("Model") and Bots.ById[d.Name] then
+					sawBot = true
+				end
+			end
+		end
+		if gui.HatchOverlay.Title.Visible then
+			titles[gui.HatchOverlay.Title.Text] = true
 		end
 	end
+	return sawCrate, sawBot, titles
 end
-check(sawCrate and sawBot, "hatch shows the 3D crate, then the 3D bot")
+local sawCrate, sawBot = driveHatch(260)
+check(sawCrate and sawBot, "hatch shows the 3D crate in front of the camera, then the 3D pet")
 check(gui.HatchOverlay.Visible == false, "hatch animation finishes and closes")
+-- A SECRET hatch plays its own sequence.
+S.ReplicatedStorage.Remotes.Hatched:FireClient(player, "Rusty", { { Uid = "secret-test", Id = "TrashKing" } })
+local _, sawSecretPet, titles = driveHatch(600)
+check(sawSecretPet and titles["? ? ?"] and titles["SECRET!!!"], "secret hatch: blackout '? ? ?' then 'SECRET!!!'")
+check(gui.HatchOverlay.Visible == false and not S.Lighting:FindFirstChild("HatchBlur"), "secret hatch cleans up blur and overlay")
 M.advance(3)
 ok = request("Hatch", "Rusty", 3)
 check(ok and #profile().Bots == 4, "triple hatch")

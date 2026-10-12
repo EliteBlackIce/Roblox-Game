@@ -102,7 +102,7 @@ local function step()
 				local spread = (follower.Index - (count + 1) / 2) * 3.2
 				local phase = t * (if moving then 9 else 3) + follower.Index
 				-- Walkers hop while you move; flyers float.
-				local lift = if follower.Style == "Crawler" or follower.Style == "Cube"
+				local lift = if follower.Style == "Walker"
 					then math.abs(math.sin(phase)) * (if moving then 0.9 else 0.25)
 					else 1.0 + math.sin(phase * 0.6) * 0.4
 				local target = root.CFrame * CFrame.new(spread, -1.6 + lift, 4.2 + math.abs(spread) * 0.35)

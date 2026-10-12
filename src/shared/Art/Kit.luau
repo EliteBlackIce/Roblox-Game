@@ -155,6 +155,36 @@ function Kit.eye(parent: Instance, cf: CFrame, size: number, iris: Color3?)
 	Kit.ball(parent, cf * CFrame.new(size * 0.12, size * 0.12, -size * 0.52), size * 0.2, Color3.fromRGB(255, 255, 255), { Name = "Sparkle", Neon = true })
 end
 
+-- CFrame on a sphere's surface (centre, radius) facing outward. yaw/pitch in
+-- degrees, measured from the sphere's front (-Z). `inset` pushes it inward.
+function Kit.onSphere(center: CFrame, radius: number, yaw: number, pitch: number, inset: number?): CFrame
+	local a, b = math.rad(yaw), math.rad(pitch)
+	local dir = Vector3.new(math.sin(a) * math.cos(b), math.sin(b), -math.cos(a) * math.cos(b))
+	local worldDir = center:VectorToWorldSpace(dir)
+	local pos = center.Position + worldDir * (radius - (inset or 0))
+	return CFrame.lookAt(pos, pos + worldDir)
+end
+
+-- Capsule stretched between two points.
+function Kit.pillBetween(parent: Instance, a: Vector3, b: Vector3, diameter: number, color: Color3, opts: Opts?)
+	local length = (b - a).Magnitude
+	if length < 1e-3 then
+		Kit.ball(parent, CFrame.new(a), diameter, color, opts)
+		return
+	end
+	Kit.pill(parent, CFrame.lookAt((a + b) / 2, b) * CFrame.Angles(0, math.rad(90), 0), length + diameter, diameter, color, opts)
+end
+
+-- Big expressive anime-style eye looking along cf's LookVector: white, coloured
+-- iris, pupil and two highlights.
+function Kit.cuteEye(parent: Instance, cf: CFrame, size: number, iris: Color3)
+	Kit.ball(parent, cf, size, Color3.fromRGB(255, 255, 255), { Name = "Eye" })
+	Kit.ball(parent, cf * CFrame.new(0, -size * 0.04, -size * 0.2), size * 0.74, iris, { Name = "Iris" })
+	Kit.ball(parent, cf * CFrame.new(0, -size * 0.06, -size * 0.3), size * 0.5, Color3.fromRGB(28, 26, 40), { Name = "Pupil" })
+	Kit.ball(parent, cf * CFrame.new(size * 0.14, size * 0.16, -size * 0.52), size * 0.24, Color3.fromRGB(255, 255, 255), { Name = "Shine", Neon = true })
+	Kit.ball(parent, cf * CFrame.new(-size * 0.12, -size * 0.16, -size * 0.5), size * 0.11, Color3.fromRGB(255, 255, 255), { Name = "Shine", Neon = true })
+end
+
 -- Gear standing in cf's YZ plane (axis along cf's X).
 function Kit.gear(parent: Instance, cf: CFrame, radius: number, thickness: number, teeth: number, color: Color3, hub: Color3?)
 	Kit.cyl(parent, cf, thickness, radius * 1.7, color)
@@ -188,6 +218,17 @@ function Kit.cone(parent: Instance, cf: CFrame, height: number, diameter: number
 		local d = diameter * (1 - i / n)
 		Kit.cylY(parent, cf * CFrame.new(0, h * (i + 0.5), 0), h, d, color, opts)
 	end
+end
+
+-- Smooth tapered spike (ears, horns, beaks) made of overlapping balls along
+-- cf's Y axis, base at cf.
+function Kit.softCone(parent: Instance, cf: CFrame, height: number, diameter: number, color: Color3, opts: Opts?)
+	-- Teardrop: a round base, a slimmer middle and a capsule tip.
+	Kit.ball(parent, cf * CFrame.new(0, diameter / 2, 0), diameter, color, opts)
+	local mid = math.max(diameter * 0.75, height * 0.42)
+	Kit.ball(parent, cf * CFrame.new(0, mid, 0), diameter * 0.7, color, opts)
+	local tipD = diameter * 0.38
+	Kit.pillBetween(parent, (cf * CFrame.new(0, mid, 0)).Position, (cf * CFrame.new(0, height - tipD / 2, 0)).Position, tipD, color, opts)
 end
 
 -- Low sparkle particle, for anything that should read as valuable.

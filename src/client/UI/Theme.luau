@@ -1,30 +1,32 @@
 --!strict
--- Shared colours, fonts and small factories for the UI modules. Chunky,
--- rounded, flat-colour style to match the low-poly world.
+-- Shared colours, fonts and small factories for the UI modules. Bright,
+-- bubbly Pet-Simulator-style look: cream panels, thick ink outlines, chunky
+-- Fredoka text, glossy coloured buttons with white stroked labels.
 
 local Theme = {}
 
 Theme.Colors = {
-	Panel = Color3.fromRGB(38, 36, 48),
-	PanelLight = Color3.fromRGB(56, 53, 70),
-	PanelDark = Color3.fromRGB(26, 25, 34),
-	Stroke = Color3.fromRGB(14, 13, 20),
-	Text = Color3.fromRGB(250, 248, 240),
-	SubText = Color3.fromRGB(185, 182, 200),
-	Cash = Color3.fromRGB(110, 235, 110),
-	Gems = Color3.fromRGB(90, 220, 255),
-	Tokens = Color3.fromRGB(255, 120, 210),
-	Accent = Color3.fromRGB(255, 200, 50),
-	Good = Color3.fromRGB(70, 195, 95),
-	Bad = Color3.fromRGB(225, 70, 65),
-	Disabled = Color3.fromRGB(95, 92, 108),
-	Info = Color3.fromRGB(70, 145, 235),
-	Purple = Color3.fromRGB(165, 95, 240),
-	Orange = Color3.fromRGB(255, 145, 50),
+	Panel = Color3.fromRGB(252, 250, 255),
+	PanelLight = Color3.fromRGB(236, 238, 252),
+	PanelDark = Color3.fromRGB(212, 216, 236),
+	Stroke = Color3.fromRGB(38, 32, 60),
+	Text = Color3.fromRGB(48, 42, 72), -- ink text on panels
+	OnColor = Color3.fromRGB(255, 255, 255), -- text on buttons, headers and the 3D world
+	SubText = Color3.fromRGB(118, 112, 145),
+	Cash = Color3.fromRGB(80, 215, 90),
+	Gems = Color3.fromRGB(60, 195, 255),
+	Tokens = Color3.fromRGB(255, 110, 205),
+	Accent = Color3.fromRGB(255, 195, 40),
+	Good = Color3.fromRGB(80, 205, 100),
+	Bad = Color3.fromRGB(240, 80, 80),
+	Disabled = Color3.fromRGB(172, 172, 192),
+	Info = Color3.fromRGB(80, 160, 255),
+	Purple = Color3.fromRGB(170, 110, 255),
+	Orange = Color3.fromRGB(255, 150, 60),
 }
 
 Theme.TitleFont = Enum.Font.FredokaOne
-Theme.BodyFont = Enum.Font.GothamBold
+Theme.BodyFont = Enum.Font.FredokaOne
 
 type Props = { [string]: any }
 
@@ -100,6 +102,11 @@ function Theme.label(props: Props): TextLabel
 	end
 	local label = Theme.create("TextLabel", defaults)
 	Theme.create("UITextSizeConstraint", { MaxTextSize = props.MaxTextSize or 28, Parent = label })
+	-- Coloured or white text gets a thin ink stroke so it pops on any background.
+	local color = label.TextColor3
+	if color ~= Theme.Colors.Text and color ~= Theme.Colors.SubText then
+		Theme.create("UIStroke", { Name = "Ink", Thickness = 1.5, Color = Theme.Colors.Stroke, Parent = label })
+	end
 	return label
 end
 
@@ -108,7 +115,7 @@ function Theme.button(props: Props, onClick: () -> ()): TextButton
 	local defaults: Props = {
 		BackgroundColor3 = Theme.Colors.Good,
 		Font = Theme.TitleFont,
-		TextColor3 = Theme.Colors.Text,
+		TextColor3 = Theme.Colors.OnColor,
 		TextScaled = true,
 		AutoButtonColor = true,
 	}
@@ -121,6 +128,7 @@ function Theme.button(props: Props, onClick: () -> ()): TextButton
 		Theme.corner(12),
 		Theme.stroke(3),
 		Theme.gloss(),
+		Theme.create("UIStroke", { Thickness = 2, Color = Theme.Colors.Stroke, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual }),
 		Theme.create("UITextSizeConstraint", { MaxTextSize = props.MaxTextSize or 22 }),
 		Theme.create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }),
 	})
