@@ -1,6 +1,6 @@
 --!strict
 -- Builds each player's collection tool from their tool tier and keeps it in the
--- backpack across respawns and upgrades. Low-poly, solid-colour look.
+-- backpack across respawns and upgrades.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -19,7 +19,9 @@ local function buildTool(tool: Tools.Tool, tier: number): Tool
 	instance.ToolTip = `Grabs x{tool.Yield} • Luck x{string.format("%.1f", tool.Luck)}`
 	instance.CanBeDropped = false
 	instance.RequiresHandle = true
-	instance.Grip = CFrame.Angles(math.rad(-90), 0, 0)
+	-- Identity rotation lays the tool's -Z along the forearm, so it points forward
+	-- out of the hand; the offset centres the capsule grip (z = 0.2) in the palm.
+	instance.Grip = CFrame.new(0, 0, 0.2)
 	instance:SetAttribute(TOOL_TAG, true)
 	instance:SetAttribute("Tier", tier)
 

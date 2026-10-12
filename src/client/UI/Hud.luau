@@ -51,7 +51,24 @@ local function currencyRow(parent: Instance, name: string, order: number, color:
 		ZIndex = 2,
 		Parent = row,
 	}, { Theme.create("UICorner", { CornerRadius = UDim.new(0.5, 0) }), Theme.stroke(3), Theme.gloss(0.3) })
-	Theme.label({ Size = UDim2.fromScale(1, 1), Text = icon, Font = Theme.TitleFont, TextColor3 = C.OnColor, ZIndex = 2, MaxTextSize = if big then 26 else 20, Parent = badge })
+	if icon == "$" then
+		Theme.label({ Size = UDim2.fromScale(1, 1), Text = icon, Font = Theme.TitleFont, TextColor3 = C.OnColor, ZIndex = 2, MaxTextSize = if big then 26 else 20, Parent = badge })
+	else
+		-- Drawn from rotated squares so it never depends on font glyph coverage:
+		-- one diamond for gems, two overlapping squares for an 8-point token star.
+		local angles = if icon == "gem" then { 45 } else { 0, 45 }
+		for _, angle in angles do
+			Theme.create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(0.42, 0.42),
+				Rotation = angle,
+				BackgroundColor3 = C.OnColor,
+				ZIndex = 3,
+				Parent = badge,
+			}, { Theme.create("UICorner", { CornerRadius = UDim.new(0, 3) }), Theme.stroke(2) })
+		end
+	end
 	local label = Theme.label({
 		Name = "Value",
 		Position = UDim2.fromOffset(height + 8, 0),
@@ -83,8 +100,8 @@ function Hud.init(screen: ScreenGui, onRemoteSell: () -> ())
 	})
 
 	refs.cash = currencyRow(stats, "Cash", 1, C.Cash, "$")
-	refs.gems = currencyRow(stats, "Gems", 2, C.Gems, "◆")
-	refs.tokens = currencyRow(stats, "Tokens", 3, C.Tokens, "★")
+	refs.gems = currencyRow(stats, "Gems", 2, C.Gems, "gem")
+	refs.tokens = currencyRow(stats, "Tokens", 3, C.Tokens, "token")
 	refs.tokensRow = refs.tokens.Parent
 
 	refs.capacityText = Theme.label({

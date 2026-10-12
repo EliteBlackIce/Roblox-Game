@@ -152,7 +152,7 @@ function Effects.swingTool()
 	local connection
 	connection = RunService.RenderStepped:Connect(function()
 		local t = math.min((os.clock() - start) / 0.3, 1)
-		tool.Grip = base * CFrame.Angles(math.sin(t * math.pi) * math.rad(-55), 0, 0)
+		tool.Grip = base * CFrame.Angles(math.sin(t * math.pi) * math.rad(45), 0, 0)
 		if t >= 1 then
 			connection:Disconnect()
 			tool.Grip = base

@@ -25,7 +25,7 @@ Every model is built from Roblox parts in one soft, cel-shaded cartoon style. Sh
 
 Animations:
 - **Crate opening:** a full 3D hatch in front of the camera, with blur, colour grading and camera shake. The crate drops in, bounces and charges up, then shatters in a shockwave, and the pet spins out in front of rarity-coloured rays. Legendary and Mythic hatches add extra charge pulses, a slam-in title and confetti. A **SECRET** hatch blacks out the screen, shows "? ? ?", cracks the crate with rainbow light and three lightning strikes, then explodes into "SECRET!!!".
-- **Collecting:** your grabber swings, and a mini 3D copy of each item hops from the pile into you. Legendary and Mythic finds show the item in a big banner.
+- **Collecting:** your tool points forward from your hand and scoops down, and a mini 3D copy of each item hops from the pile into you. Legendary and Mythic finds show the item in a big banner.
 - **World:** crates hover and spin on their pedestals, the coins on the Scrap Buyers spin, and the gate emblems, rebirth crystal and trophy float.
 - **Bots:** walkers hop after you and flyers bob along beside you.
 - **Ambient life:** clouds drift overhead, butterflies flutter around you, and glowing motes float in the air. Every zone is scattered with grass tufts, flowers and loose junk. All of this switches off with *Low Effects*.
