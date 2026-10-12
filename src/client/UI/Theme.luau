@@ -52,6 +52,19 @@ function Theme.create(className: string, props: Props?, children: { Instance }?)
 	return instance
 end
 
+-- Light-to-dark vertical gradient that gives flat colours a glossy, toy-like look.
+function Theme.gloss(amount: number?): UIGradient
+	local shade = 1 - (amount or 0.22)
+	return Theme.create("UIGradient", {
+		Rotation = 90,
+		Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+			ColorSequenceKeypoint.new(1, Color3.new(shade, shade, shade)),
+		}),
+	})
+end
+
 function Theme.corner(radius: number?): UICorner
 	return Theme.create("UICorner", { CornerRadius = UDim.new(0, radius or 10) })
 end
@@ -105,8 +118,9 @@ function Theme.button(props: Props, onClick: () -> ()): TextButton
 		end
 	end
 	local button = Theme.create("TextButton", defaults, {
-		Theme.corner(10),
-		Theme.stroke(2),
+		Theme.corner(12),
+		Theme.stroke(3),
+		Theme.gloss(),
 		Theme.create("UITextSizeConstraint", { MaxTextSize = props.MaxTextSize or 22 }),
 		Theme.create("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }),
 	})

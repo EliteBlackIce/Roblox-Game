@@ -20,6 +20,9 @@
       }
     },
     "Workspace": {
+      "$properties": {
+        "StreamingEnabled": true
+      },
       "Junkyard": {
         "$path": "map/Junkyard.model.json"
       }
@@ -29,22 +32,22 @@
       "$properties": {
         "Ambient": {
           "Color3": [
-            0.43137,
-            0.41176,
-            0.47059
+            0.47059,
+            0.45098,
+            0.5098
           ]
         },
-        "Brightness": 3,
-        "ClockTime": 14.5,
-        "EnvironmentDiffuseScale": 0.4,
-        "EnvironmentSpecularScale": 0.2,
-        "GeographicLatitude": 30,
+        "Brightness": 3.2,
+        "ClockTime": 14,
+        "EnvironmentDiffuseScale": 0.5,
+        "EnvironmentSpecularScale": 0.3,
+        "GeographicLatitude": 25,
         "GlobalShadows": true,
         "OutdoorAmbient": {
           "Color3": [
-            0.58824,
-            0.58824,
-            0.64706
+            0.64706,
+            0.64706,
+            0.70588
           ]
         },
         "Technology": "ShadowMap"

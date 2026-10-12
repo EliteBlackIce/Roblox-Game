@@ -25,11 +25,11 @@ project = json.load(open(project_path))
 props = json.load(open(f"{root}/map/lighting.props.json"))
 props["Technology"] = "ShadowMap"
 project["tree"]["Lighting"] = {"$path": "map/Lighting", "$properties": props}
-project["tree"]["Workspace"] = {"Junkyard": {"$path": "map/Junkyard.model.json"}}
+project["tree"]["Workspace"] = {"$properties": {"StreamingEnabled": True}, "Junkyard": {"$path": "map/Junkyard.model.json"}}
 with open(project_path, "w") as f:
     json.dump(project, f, indent=2)
     f.write("\n")
 EOF
 rm "$ROOT/map/lighting.props.json"
 
-rojo build "$ROOT/default.project.json" -o "$ROOT/JunkyardSimulator.rbxlx"
+rojo build "$ROOT/default.project.json" -o "$ROOT/JunkyardSimulator.rbxl"

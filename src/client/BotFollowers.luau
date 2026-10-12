@@ -1,78 +1,54 @@
 --!strict
--- Renders every player's equipped Scrap Bots as little low-poly robots that
--- hover behind them. Purely visual and local; the server only publishes the
--- "Bots" attribute ("BotId,BotId:g,...").
+-- Renders every player's equipped Scrap Bots (the detailed BotArt models) as
+-- little robots that hover and hop behind them. Purely visual and local; the
+-- server only publishes the "Bots" attribute ("BotId,BotId:g,...").
+--
+-- Each bot's parts are welded to one anchored root, so moving a bot is a single
+-- CFrame write per frame.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
+local BotArt = require(ReplicatedStorage.Shared.Art.BotArt)
 local Bots = require(ReplicatedStorage.Shared.Bots)
+local Kit = require(ReplicatedStorage.Shared.Art.Kit)
 local State = require(script.Parent.State)
 
 local BotFollowers = {}
 
-local GOLD = Color3.fromRGB(255, 205, 50)
+local SCALE = 0.7
 
-type Follower = { Model: Model, Root: Part, Index: number, Pose: CFrame? }
+type Follower = { Model: Model, Root: BasePart, Index: number, Pose: CFrame?, Style: string }
 local followers: { [Player]: { Follower } } = {}
--- Each part's offset from the bot's pose, kept in Lua rather than attributes.
-local offsets: { [BasePart]: CFrame } = setmetatable({}, { __mode = "k" }) :: any
 local folder: Folder
 
-local function part(model: Model, name: string, size: Vector3, offset: CFrame, color: Color3, neon: boolean?): Part
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.CastShadow = false
-	p.Size = size
-	p.Color = color
-	p.Material = if neon then Enum.Material.Neon else Enum.Material.SmoothPlastic
-	p.TopSurface = Enum.SurfaceType.Smooth
-	p.BottomSurface = Enum.SurfaceType.Smooth
-	offsets[p] = offset
-	p.Parent = model
-	return p
-end
-
-local function buildBot(id: string, golden: boolean): (Model, Part)
-	local bot = Bots.ById[id]
-	local body = if golden then GOLD else bot.Body
-	local trim = bot.Trim
-	local model = Instance.new("Model")
-	model.Name = id
-	local root = part(model, "Body", Vector3.new(1.4, 1.4, 1.4), CFrame.new(), body)
-	if bot.Style == "Drone" then
-		root.Size = Vector3.new(1.6, 0.8, 1.6)
-		for _, x in { -1.1, 1.1 } do
-			part(model, "Rotor", Vector3.new(0.15, 1.3, 1.3), CFrame.new(x, 0.55, 0) * CFrame.Angles(0, 0, math.rad(90)), trim)
+-- Builds a bot and welds everything to an invisible anchored root at its centre.
+local function buildFollower(id: string, golden: boolean): (Model, BasePart)
+	local model = BotArt.build(id, golden)
+	Kit.scale(model, SCALE)
+	local root = Instance.new("Part")
+	root.Name = "Root"
+	root.Size = Vector3.one * 0.2
+	root.Transparency = 1
+	root.Anchored = true
+	root.CanCollide = false
+	root.CanQuery = false
+	root.CanTouch = false
+	root.CFrame = CFrame.new()
+	root.Parent = model
+	for _, part in model:GetDescendants() do
+		if part:IsA("BasePart") and part ~= root then
+			part.Anchored = false
+			part.CanCollide = false
+			part.CanQuery = false
+			part.Massless = true
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = root
+			weld.Part1 = part
+			weld.Parent = part
 		end
-		part(model, "Eye", Vector3.new(0.9, 0.3, 0.1), CFrame.new(0, 0, -0.82), trim, true)
-	elseif bot.Style == "Crawler" then
-		root.Size = Vector3.new(1.4, 0.8, 1.8)
-		for _, x in { -0.7, 0.7 } do
-			for _, z in { -0.6, 0.6 } do
-				part(model, "Leg", Vector3.new(0.25, 0.7, 0.25), CFrame.new(x, -0.55, z) * CFrame.Angles(0, 0, math.rad(if x < 0 then 20 else -20)), trim)
-			end
-		end
-		part(model, "Head", Vector3.new(0.9, 0.7, 0.7), CFrame.new(0, 0.3, -1.0), body)
-		part(model, "Eye", Vector3.new(0.7, 0.2, 0.1), CFrame.new(0, 0.35, -1.36), trim, true)
-	elseif bot.Style == "Orb" then
-		root.Size = Vector3.new(1.3, 1.3, 1.3)
-		offsets[root] = CFrame.Angles(math.rad(45), math.rad(45), 0)
-		part(model, "Ring", Vector3.new(2.4, 0.2, 2.4), CFrame.Angles(0, math.rad(45), 0), trim, true)
-		part(model, "Eye", Vector3.new(0.5, 0.5, 0.1), CFrame.new(0, 0.1, -0.95), trim, true)
-	else -- Cube
-		part(model, "Eye", Vector3.new(1.0, 0.3, 0.1), CFrame.new(0, 0.2, -0.72), trim, true)
-		part(model, "Antenna", Vector3.new(0.15, 0.6, 0.15), CFrame.new(0, 1.0, 0), trim)
-		part(model, "Tip", Vector3.new(0.35, 0.35, 0.35), CFrame.new(0, 1.4, 0), trim, true)
-	end
-	if golden then
-		part(model, "Crown", Vector3.new(0.8, 0.3, 0.8), CFrame.new(0, 1.0, 0.1), GOLD, true)
 	end
 	model.PrimaryPart = root
 	return model, root
@@ -99,9 +75,9 @@ local function rebuild(player: Player)
 	for i, entry in string.split(raw, ",") do
 		local id, flag = string.match(entry, "^(%w+):?(%w*)$")
 		if id and Bots.ById[id] then
-			local model, root = buildBot(id, flag == "g")
+			local model, root = buildFollower(id, flag == "g")
 			model.Parent = folder
-			table.insert(list, { Model = model, Root = root, Index = i })
+			table.insert(list, { Model = model, Root = root, Index = i, Style = Bots.ById[id].Style })
 		end
 	end
 	followers[player] = list
@@ -121,18 +97,19 @@ local function step()
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if root and root:IsA("BasePart") then
 			local count = #list
+			local moving = root.AssemblyLinearVelocity.Magnitude > 2
 			for _, follower in list do
-				local spread = (follower.Index - (count + 1) / 2) * 3
-				local bob = math.sin(t * 3 + follower.Index) * 0.35
-				local target = root.CFrame * CFrame.new(spread, 1.5 + bob, 4.5 + math.abs(spread) * 0.3)
+				local spread = (follower.Index - (count + 1) / 2) * 3.2
+				local phase = t * (if moving then 9 else 3) + follower.Index
+				-- Walkers hop while you move; flyers float.
+				local lift = if follower.Style == "Crawler" or follower.Style == "Cube"
+					then math.abs(math.sin(phase)) * (if moving then 0.9 else 0.25)
+					else 1.0 + math.sin(phase * 0.6) * 0.4
+				local target = root.CFrame * CFrame.new(spread, -1.6 + lift, 4.2 + math.abs(spread) * 0.35)
 				local current = follower.Pose
-				local nextCFrame = if not current or (current.Position - target.Position).Magnitude > 40 then target else current:Lerp(target, 0.15)
-				follower.Pose = nextCFrame
-				for _, p in follower.Model:GetChildren() do
-					if p:IsA("BasePart") then
-						p.CFrame = nextCFrame * (offsets[p] or CFrame.new())
-					end
-				end
+				local nextPose = if not current or (current.Position - target.Position).Magnitude > 40 then target else current:Lerp(target, 0.18)
+				follower.Pose = nextPose
+				follower.Root.CFrame = nextPose
 			end
 		end
 	end
@@ -163,7 +140,7 @@ function BotFollowers.init()
 	RunService.RenderStepped:Connect(step)
 end
 
-BotFollowers.count = function(player: Player): number
+function BotFollowers.count(player: Player): number
 	return #(followers[player] or {})
 end
 

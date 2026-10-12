@@ -4,9 +4,11 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local ToolArt = require(ReplicatedStorage.Shared.Art.ToolArt)
 local Tools = require(ReplicatedStorage.Shared.Tools)
 local State = require(script.Parent.Parent.Parent.State)
 local Theme = require(script.Parent.Parent.Theme)
+local Viewport = require(script.Parent.Parent.Viewport)
 local Windows = require(script.Parent.Parent.Windows)
 
 local C = Theme.Colors
@@ -17,12 +19,13 @@ return function()
 
 	local rows = {}
 	for tier, tool in Tools do
-		local row = Theme.create("Frame", { Name = "Tool" .. tier, LayoutOrder = tier, Size = UDim2.new(1, 0, 0, 64), BackgroundColor3 = C.PanelLight, Parent = list }, { Theme.corner(12), Theme.stroke(2), Theme.padding(8) })
-		Theme.create("Frame", { Size = UDim2.fromOffset(44, 44), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.fromScale(0, 0.5), BackgroundColor3 = tool.Color, Rotation = 45, Parent = row }, { Theme.corner(8), Theme.stroke(2) })
-		Theme.label({ Position = UDim2.fromOffset(60, 0), Size = UDim2.new(0.45, -60, 0.55, 0), Text = tool.Name, Font = Theme.TitleFont, TextXAlignment = Enum.TextXAlignment.Left, MaxTextSize = 22, Parent = row })
+		local row = Theme.create("Frame", { Name = "Tool" .. tier, LayoutOrder = tier, Size = UDim2.new(1, 0, 0, 74), BackgroundColor3 = C.PanelLight, Parent = list }, { Theme.corner(12), Theme.stroke(2), Theme.padding(8) })
+		local holder = Theme.create("Frame", { Size = UDim2.new(0, 110, 1, 0), BackgroundColor3 = C.Panel, Parent = row }, { Theme.corner(10) })
+		Viewport.new(holder, ToolArt.build(tier), nil, { Yaw = 90, Pitch = 20, Zoom = 1.2 })
+		Theme.label({ Position = UDim2.fromOffset(122, 0), Size = UDim2.new(0.5, -122, 0.55, 0), Text = tool.Name, Font = Theme.TitleFont, TextXAlignment = Enum.TextXAlignment.Left, MaxTextSize = 22, Parent = row })
 		Theme.label({
-			Position = UDim2.new(0, 60, 0.55, 0),
-			Size = UDim2.new(0.5, -60, 0.45, 0),
+			Position = UDim2.new(0, 122, 0.55, 0),
+			Size = UDim2.new(0.55, -122, 0.45, 0),
 			Text = `Grabs x{tool.Yield}  •  Luck x{string.format("%.1f", tool.Luck)}`,
 			TextColor3 = C.SubText,
 			TextXAlignment = Enum.TextXAlignment.Left,

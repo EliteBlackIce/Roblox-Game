@@ -12,6 +12,8 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Zones = require(ReplicatedStorage.Shared.Zones)
+local Items = require(ReplicatedStorage.Shared.Art.Items)
+local Kit = require(ReplicatedStorage.Shared.Art.Kit)
 local Notifications = require(script.Parent.UI.Notifications)
 
 local Effects = {}
@@ -81,33 +83,81 @@ function Effects.burst(position: Vector3, color: Color3, amount: number)
 	Debris:AddItem(part, 1.5)
 end
 
--- A small low-poly chunk that hops from the pile into the player.
-local function flyingChunk(from: Vector3, root: BasePart, color: Color3, delayTime: number)
+-- A mini 3D copy of the item that hops from the pile into the player.
+local function flyingItem(itemId: string, from: Vector3, root: BasePart, delayTime: number)
 	task.delay(delayTime, function()
-		local chunk = Instance.new("Part")
-		chunk.Anchored = true
-		chunk.CanCollide = false
-		chunk.CanQuery = false
-		chunk.Size = Vector3.new(0.9, 0.9, 0.9)
-		chunk.Color = color
-		chunk.Material = Enum.Material.SmoothPlastic
-		chunk.CFrame = CFrame.new(from)
-		chunk.Parent = effectsFolder()
+		local model = Items.build(itemId)
+		Kit.scale(model, 0.45)
+		local anchor = Instance.new("Part")
+		anchor.Name = "Root"
+		anchor.Size = Vector3.one * 0.2
+		anchor.Transparency = 1
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CFrame = CFrame.new()
+		anchor.Parent = model
+		for _, part in model:GetDescendants() do
+			if part:IsA("BasePart") and part ~= anchor then
+				part.Anchored = false
+				part.CanCollide = false
+				part.CanQuery = false
+				part.Massless = true
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = anchor
+				weld.Part1 = part
+				weld.Parent = part
+			elseif part:IsA("ParticleEmitter") then
+				part.Enabled = false
+			end
+		end
+		anchor.CFrame = CFrame.new(from)
+		model.Parent = effectsFolder()
 
 		local start = os.clock()
-		local duration = 0.45
+		local duration = 0.55
 		local connection
 		connection = RunService.RenderStepped:Connect(function()
 			local t = math.min((os.clock() - start) / duration, 1)
-			local arc = Vector3.new(0, math.sin(t * math.pi) * 4, 0)
-			chunk.CFrame = CFrame.new(from:Lerp(root.Position, t) + arc) * CFrame.Angles(t * 6, t * 4, 0)
-			chunk.Size = Vector3.one * (0.9 * (1 - t * 0.6))
+			local arc = Vector3.new(0, math.sin(t * math.pi) * 5, 0)
+			anchor.CFrame = CFrame.new(from:Lerp(root.Position, t) + arc) * CFrame.Angles(t * 5, t * 8, 0)
 			if t >= 1 then
 				connection:Disconnect()
-				chunk:Destroy()
+				model:Destroy()
 			end
 		end)
-		Debris:AddItem(chunk, 2)
+		Debris:AddItem(model, 2)
+	end)
+end
+
+-- Quick downward swing of the equipped grabber (local only).
+local swinging = false
+function Effects.swingTool()
+	local character = Players.LocalPlayer.Character
+	if swinging or not character then
+		return
+	end
+	local tool = nil
+	for _, child in character:GetChildren() do
+		if child:IsA("Tool") and child:GetAttribute("JunkyardTool") then
+			tool = child
+		end
+	end
+	if not tool then
+		return
+	end
+	swinging = true
+	local base = tool.Grip
+	local start = os.clock()
+	local connection
+	connection = RunService.RenderStepped:Connect(function()
+		local t = math.min((os.clock() - start) / 0.3, 1)
+		tool.Grip = base * CFrame.Angles(math.sin(t * math.pi) * math.rad(-55), 0, 0)
+		if t >= 1 then
+			connection:Disconnect()
+			tool.Grip = base
+			swinging = false
+		end
 	end)
 end
 
@@ -150,6 +200,7 @@ function Effects.collected(itemIds: { string }, position: Vector3, info: any)
 		isNew[id] = true
 	end
 
+	Effects.swingTool()
 	local bestTier = 0
 	local bestItem = nil
 	for i, id in itemIds do
@@ -160,7 +211,7 @@ function Effects.collected(itemIds: { string }, position: Vector3, info: any)
 			local text = if isNew[id] then `NEW! +1 {item.Name}` else `+1 {item.Name}`
 			Effects.floatingText(position + Vector3.new(0, 2 + (i - 1) * 1.5, 0), text, rarity.Color, rarity.Tier >= 2, delayTime)
 			if root and root:IsA("BasePart") and not Effects.lowFx then
-				flyingChunk(position, root, item.Color, delayTime)
+				flyingItem(id, position, root, delayTime)
 			end
 			Effects.burst(position, rarity.Color, 8 + rarity.Tier * 8)
 			if rarity.Tier >= bestTier then
@@ -174,7 +225,7 @@ function Effects.collected(itemIds: { string }, position: Vector3, info: any)
 	end
 	if bestItem and bestTier >= 3 then
 		local rarity = Config.RarityById[bestItem.Rarity]
-		Notifications.bigFind(string.upper(rarity.Name) .. "!", bestItem.Name, rarity.Color)
+		Notifications.bigFind(string.upper(rarity.Name) .. "!", bestItem.Name, rarity.Color, Items.build(bestItem.Id))
 		Effects.playSound(Config.Sounds.Rare, 1.3)
 	end
 	Effects.playSound(Config.Sounds.Collect, 1 + bestTier * 0.12)

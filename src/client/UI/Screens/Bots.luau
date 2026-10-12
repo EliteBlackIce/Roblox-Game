@@ -3,10 +3,12 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local BotArt = require(ReplicatedStorage.Shared.Art.BotArt)
 local Bots = require(ReplicatedStorage.Shared.Bots)
 local Config = require(ReplicatedStorage.Shared.Config)
 local State = require(script.Parent.Parent.Parent.State)
 local Theme = require(script.Parent.Parent.Theme)
+local Viewport = require(script.Parent.Parent.Viewport)
 local Windows = require(script.Parent.Parent.Windows)
 
 local C = Theme.Colors
@@ -56,10 +58,11 @@ return function()
 	}, { Theme.corner(12), Theme.stroke(2), Theme.padding(10) })
 	local empty = Theme.label({ Size = UDim2.fromScale(1, 1), Text = "Hatch bots from the crates in the Hub!\n\nSelect a bot to manage it.", TextWrapped = true, TextColor3 = C.SubText, MaxTextSize = 18, Parent = detail })
 	local info = Theme.create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = detail })
-	local swatch = Theme.create("Frame", { Size = UDim2.fromOffset(60, 60), Position = UDim2.new(0.5, -30, 0, 0), BackgroundColor3 = C.Panel, Parent = info }, { Theme.corner(12), Theme.stroke(3) })
-	local nameLabel = Theme.label({ Position = UDim2.fromOffset(0, 66), Size = UDim2.new(1, 0, 0, 28), Font = Theme.TitleFont, MaxTextSize = 24, Parent = info })
-	local rarityLabel = Theme.label({ Position = UDim2.fromOffset(0, 94), Size = UDim2.new(1, 0, 0, 20), Font = Theme.TitleFont, MaxTextSize = 18, Parent = info })
-	local statsLabel = Theme.label({ Position = UDim2.fromOffset(0, 116), Size = UDim2.new(1, 0, 0, 22), TextColor3 = C.Cash, MaxTextSize = 17, Parent = info })
+	local swatch = Theme.create("Frame", { Size = UDim2.new(1, 0, 0, 120), BackgroundColor3 = C.Panel, Parent = info }, { Theme.corner(12), Theme.stroke(3) })
+	local nameLabel = Theme.label({ Position = UDim2.fromOffset(0, 124), Size = UDim2.new(1, 0, 0, 26), Font = Theme.TitleFont, MaxTextSize = 24, Parent = info })
+	local rarityLabel = Theme.label({ Position = UDim2.fromOffset(0, 150), Size = UDim2.new(1, 0, 0, 18), Font = Theme.TitleFont, MaxTextSize = 18, Parent = info })
+	local statsLabel = Theme.label({ Position = UDim2.fromOffset(0, 170), Size = UDim2.new(1, 0, 0, 20), TextColor3 = C.Cash, MaxTextSize = 17, Parent = info })
+	local shownDetail = ""
 
 	local selected: string? = nil
 	local deleteArmed = false
@@ -118,10 +121,15 @@ return function()
 		empty.Visible = false
 		local bot = Bots.ById[owned.Id]
 		local rarity = Config.RarityById[bot.Rarity]
-		swatch.BackgroundColor3 = bot.Body
+		local key = owned.Uid .. tostring(owned.Golden)
+		if shownDetail ~= key then
+			shownDetail = key
+			Theme.clear(swatch)
+			Viewport.new(swatch, BotArt.build(owned.Id, owned.Golden), nil, { Yaw = 25, Pitch = 10, Zoom = 1.1 })
+		end
 		local stroke = swatch:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Color = if owned.Golden then C.Accent else bot.Trim
+			stroke.Color = if owned.Golden then C.Accent else rarity.Color
 		end
 		nameLabel.Text = (if owned.Golden then "Golden " else "") .. bot.Name
 		nameLabel.TextColor3 = if owned.Golden then C.Accent else C.Text
@@ -147,8 +155,21 @@ return function()
 		end
 	end
 
+	local lastSignature = ""
 	local function render(state: any)
 		summary.Text = `Equipped {#state.Equipped}/{state.BotSlots}  •  Storage {#state.Bots}/{Bots.MaxInventory}`
+		-- Only rebuild the 3D cards when the bot list actually changed.
+		local parts = { tostring(selected) }
+		for _, owned in state.Bots do
+			table.insert(parts, owned.Uid .. owned.Id .. tostring(owned.Golden))
+		end
+		table.insert(parts, table.concat(state.Equipped, "/"))
+		local signature = table.concat(parts, ",")
+		if signature == lastSignature then
+			renderDetail(state)
+			return
+		end
+		lastSignature = signature
 		Theme.clear(grid)
 		local sorted = table.clone(state.Bots)
 		table.sort(sorted, function(a, b)
@@ -171,10 +192,7 @@ return function()
 				AutoButtonColor = true,
 				Parent = grid,
 			}, { Theme.corner(12), Theme.stroke(3, if owned.Golden then C.Accent else rarity.Color) })
-			Theme.create("Frame", { Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0.5, -23, 0, 8), BackgroundColor3 = bot.Body, Parent = card }, {
-				Theme.corner(8),
-				Theme.stroke(3, bot.Trim),
-			})
+			Viewport.new(card, BotArt.build(owned.Id, owned.Golden), { Size = UDim2.new(1, 0, 0, 62), Position = UDim2.fromOffset(0, 2) }, { Yaw = 25, Pitch = 10, Zoom = 1.1 })
 			Theme.label({ Position = UDim2.fromOffset(4, 60), Size = UDim2.new(1, -8, 0, 22), Text = bot.Name, Font = Theme.TitleFont, MaxTextSize = 16, Parent = card })
 			Theme.label({ Position = UDim2.fromOffset(4, 82), Size = UDim2.new(1, -8, 0, 16), Text = rarity.Name, TextColor3 = rarity.Color, MaxTextSize = 13, Parent = card })
 			if equipped then

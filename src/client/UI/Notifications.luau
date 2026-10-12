@@ -9,6 +9,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Formulas = require(ReplicatedStorage.Shared.Formulas)
 local Zones = require(ReplicatedStorage.Shared.Zones)
 local Theme = require(script.Parent.Theme)
+local Viewport = require(script.Parent.Viewport)
 
 local Notifications = {}
 
@@ -28,6 +29,7 @@ local bigLabel: TextLabel
 local bigSub: TextLabel
 local bigScale: UIScale
 local bigToken = 0
+local bigModel: Frame
 
 local EVENT_COLORS = {
 	Golden = Color3.fromRGB(255, 210, 60),
@@ -110,6 +112,7 @@ function Notifications.init(screen: ScreenGui)
 		Parent = screen,
 	})
 	bigScale = Theme.create("UIScale", { Scale = 0, Parent = big })
+	bigModel = Theme.create("Frame", { Name = "Model", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromOffset(140, 140), BackgroundTransparency = 1, Parent = big })
 	bigLabel = Theme.label({ Size = UDim2.fromScale(1, 0.62), Font = Theme.TitleFont, MaxTextSize = 72, Parent = big })
 	Theme.textStroke(4).Parent = bigLabel
 	bigSub = Theme.label({ Position = UDim2.fromScale(0, 0.62), Size = UDim2.fromScale(1, 0.38), Font = Theme.TitleFont, MaxTextSize = 32, Parent = big })
@@ -244,9 +247,13 @@ function Notifications.announce(text: string, kind: string?)
 end
 
 -- Big centre-screen banner for your own Epic+ finds and hatches.
-function Notifications.bigFind(title: string, subtitle: string, color: Color3)
+function Notifications.bigFind(title: string, subtitle: string, color: Color3, model: Model?)
 	bigToken += 1
 	local token = bigToken
+	Theme.clear(bigModel)
+	if model then
+		Viewport.new(bigModel, model, nil, { Yaw = 25, Pitch = 15, Zoom = 1.1 })
+	end
 	bigLabel.Text = title
 	bigLabel.TextColor3 = color
 	bigSub.Text = subtitle
@@ -262,6 +269,10 @@ function Notifications.bigFind(title: string, subtitle: string, color: Color3)
 		local info = TweenInfo.new(0.5)
 		TweenService:Create(bigLabel, info, { TextTransparency = 1 }):Play()
 		TweenService:Create(bigSub, info, { TextTransparency = 1 }):Play()
+		task.wait(0.5)
+		if token == bigToken then
+			Theme.clear(bigModel)
+		end
 	end)
 end
 

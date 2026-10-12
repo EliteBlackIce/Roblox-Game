@@ -64,8 +64,9 @@ function Windows.create(name: string, title: string, color: Color3, size: Vector
 		Parent = screen,
 	}, {
 		Theme.corner(18),
-		Theme.stroke(4),
+		Theme.stroke(5),
 		Theme.padding(14),
+		Theme.gloss(0.15),
 		Theme.create("UISizeConstraint", { MinSize = Vector2.new(330, 300), MaxSize = size or Vector2.new(820, 520) }),
 		Theme.create("UIScale", { Name = "PopScale" }),
 	})
@@ -75,7 +76,7 @@ function Windows.create(name: string, title: string, color: Color3, size: Vector
 		Size = UDim2.new(1, 0, 0, 44),
 		BackgroundColor3 = color,
 		Parent = window,
-	}, { Theme.corner(12), Theme.stroke(2) })
+	}, { Theme.corner(12), Theme.stroke(3), Theme.gloss(0.3) })
 	local titleLabel = Theme.label({
 		Name = "Title",
 		Position = UDim2.fromOffset(14, 0),

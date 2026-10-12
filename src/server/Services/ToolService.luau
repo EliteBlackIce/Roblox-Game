@@ -5,6 +5,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local ToolArt = require(ReplicatedStorage.Shared.Art.ToolArt)
 local Tools = require(ReplicatedStorage.Shared.Tools)
 local DataService = require(script.Parent.DataService)
 
@@ -12,46 +13,44 @@ local ToolService = {}
 
 local TOOL_TAG = "JunkyardTool"
 
-local function buildTool(tool: Tools.Tool): Tool
+local function buildTool(tool: Tools.Tool, tier: number): Tool
 	local instance = Instance.new("Tool")
 	instance.Name = tool.Name
 	instance.ToolTip = `Grabs x{tool.Yield} • Luck x{string.format("%.1f", tool.Luck)}`
 	instance.CanBeDropped = false
 	instance.RequiresHandle = true
-	instance.Grip = CFrame.new(0, -1, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+	instance.Grip = CFrame.Angles(math.rad(-90), 0, 0)
 	instance:SetAttribute(TOOL_TAG, true)
+	instance:SetAttribute("Tier", tier)
 
+	-- Invisible grip point at the model's origin; every visible part welds to it.
 	local handle = Instance.new("Part")
 	handle.Name = "Handle"
-	handle.Size = Vector3.new(0.4, 0.4, 3.2)
-	handle.Color = Color3.fromRGB(55, 55, 60)
-	handle.Material = Enum.Material.SmoothPlastic
+	handle.Size = Vector3.new(0.4, 0.4, 0.4)
+	handle.Transparency = 1
 	handle.CanCollide = false
 	handle.Massless = true
+	handle.CFrame = CFrame.new()
 	handle.Parent = instance
 
-	local material = if tool.Glow then Enum.Material.Neon else Enum.Material.SmoothPlastic
-	local function attach(name: string, size: Vector3, offset: CFrame, color: Color3, mat: Enum.Material)
-		local part = Instance.new("Part")
-		part.Name = name
-		part.Size = size
-		part.Color = color
-		part.Material = mat
-		part.CanCollide = false
-		part.Massless = true
-		part.CFrame = handle.CFrame * offset
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = part
-		weld.Parent = part
-		part.Parent = instance
+	local art = ToolArt.build(tier)
+	for _, part in art:GetDescendants() do
+		if part:IsA("BasePart") then
+			if part.Name == "Handle" then
+				part.Name = "Grip"
+			end
+			part.Anchored = false
+			part.CanCollide = false
+			part.CanQuery = false
+			part.Massless = true
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = handle
+			weld.Part1 = part
+			weld.Parent = part
+			part.Parent = instance
+		end
 	end
-
-	attach("Grip", Vector3.new(0.55, 0.55, 0.9), CFrame.new(0, 0, 1.1), Color3.fromRGB(30, 30, 30), Enum.Material.SmoothPlastic)
-	attach("Body", Vector3.new(0.8, 0.8, 0.8), CFrame.new(0, 0, -1.4) * CFrame.Angles(0, 0, math.rad(45)), tool.Color, Enum.Material.SmoothPlastic)
-	attach("ClawBase", Vector3.new(1.2, 0.35, 0.35), CFrame.new(0, 0, -1.9), tool.Color, Enum.Material.SmoothPlastic)
-	attach("ClawLeft", Vector3.new(0.22, 0.3, 0.9), CFrame.new(-0.5, 0, -2.4) * CFrame.Angles(0, math.rad(14), 0), tool.Color, material)
-	attach("ClawRight", Vector3.new(0.22, 0.3, 0.9), CFrame.new(0.5, 0, -2.4) * CFrame.Angles(0, math.rad(-14), 0), tool.Color, material)
+	art:Destroy()
 	return instance
 end
 
@@ -81,7 +80,7 @@ function ToolService.refresh(player: Player)
 	if not backpack then
 		return
 	end
-	local tool = buildTool(Formulas.getTool(profile))
+	local tool = buildTool(Formulas.getTool(profile), profile.ToolTier)
 	tool.Parent = backpack
 	if character then
 		local humanoid = character:FindFirstChildOfClass("Humanoid")

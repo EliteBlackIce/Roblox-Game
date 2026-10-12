@@ -103,6 +103,34 @@ check(#daily == 3 and daily[1] ~= daily[2] and daily[2] ~= daily[3] and daily[1]
 local again = Quests.pickDaily(100, 5)
 check(again[1] == daily[1] and again[3] == daily[3], "daily pick is deterministic")
 
+---------------------------------------------------------------- art
+print("== Art")
+for _, name in { "Items", "BotArt", "CrateArt", "ToolArt" } do
+	local Art = require(shared.Art:FindFirstChild(name))
+	local ids = Art.list()
+	local okAll, minParts = true, math.huge
+	for _, id in ids do
+		local built, model = pcall(Art.build, id)
+		if not built then
+			okAll = false
+			print("    build failed: " .. name .. "." .. id .. ": " .. tostring(model))
+		else
+			local n = 0
+			for _, d in model:GetDescendants() do
+				if d:IsA("BasePart") then
+					n += 1
+				end
+			end
+			minParts = math.min(minParts, n)
+		end
+	end
+	check(okAll and minParts >= 5, `{name}: all {#ids} models build with real detail (min {minParts} parts)`)
+end
+check(#require(shared.Art.Items).list() == 42, "a model for every item")
+local goldenBot = require(shared.Art.BotArt).build("BoltBot", true)
+check(goldenBot:FindFirstChild("Part", true) ~= nil, "golden bot variant builds")
+check(require(shared.Art.CrateArt).build("Gem"):FindFirstChild("Lid") ~= nil, "crates have a detachable lid")
+
 ---------------------------------------------------------------- boot
 print("== Server boot")
 -- Background events are triggered manually below, so park their timers.
@@ -130,7 +158,7 @@ end
 print("    parts: " .. partCount)
 check(unanchored == 0, "all scenery anchored")
 check(textured == 0, "no realistic textures, only flat colour (SmoothPlastic/Neon)")
-check(partCount < 6000, "map part budget")
+check(partCount < 25000, "map part budget")
 local CS = S.CollectionService
 local piles = CS:GetTagged("ScrapPile")
 check(#piles == 96, "96 scrap piles (16 per zone)")
@@ -177,6 +205,19 @@ local function equippedTool()
 	end
 end
 check(equippedTool() and equippedTool().Name == "Rusty Grabber", "starts with Rusty Grabber equipped")
+do
+	local tool = equippedTool()
+	local welded, total = 0, 0
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") and d.Name ~= "Handle" then
+			total += 1
+			if d:FindFirstChildOfClass("WeldConstraint") and not d.Anchored then
+				welded += 1
+			end
+		end
+	end
+	check(tool:FindFirstChild("Handle") and total > 5 and welded == total, `tool model welded to its handle ({total} parts)`)
+end
 check(player.Character.Humanoid.WalkSpeed == 16, "base walk speed")
 
 local DataService = require(server.Services.DataService)
@@ -224,6 +265,15 @@ check(gui.QuestTracker.Visible and gui.QuestTracker:GetDescendants() ~= nil, "qu
 check(gui.Hint.Text:find("scrap pile") ~= nil, "new player hint")
 check(gui.Menu:FindFirstChild("StoreButton") == nil, "store hidden when no products are configured")
 check(gui.Menu:FindFirstChild("BotsButton") ~= nil and gui.Menu:FindFirstChild("RebirthButton") ~= nil, "menu buttons exist")
+check(gui.Menu.BotsButton:FindFirstChildOfClass("ViewportFrame") ~= nil, "menu buttons show 3D icons")
+local WorldAnimator
+M.context = "client"
+WorldAnimator = require(client.WorldAnimator)
+M.context = "server"
+check(WorldAnimator.count() >= 20, `world animator drives the hover models ({WorldAnimator.count()})`)
+S.RunService.RenderStepped:Fire()
+M.advance(0.05)
+check((M.bulkMoves or 0) > 0, "hover animation moves parts with BulkMoveTo")
 local heapPiles = pilesIn("ScrapHeap")
 check(math.abs(heapPiles[1].PromptAnchor.CollectPrompt.HoldDuration - 1.6) < 1e-6, "client sets hold duration to cooldown")
 local carGate = tagged("ZoneGate", "ZoneId", "CarGraveyard")
@@ -271,8 +321,8 @@ while pile:GetAttribute("Active") and guard < 20 do
 end
 check(pile:GetAttribute("Active") == false and prompt.Enabled == false, "pile depletes")
 local junk
-for _, d in pile:GetChildren() do
-	if d.Name == "Junk" then
+for _, d in pile:GetDescendants() do
+	if d:IsA("BasePart") and d.Name ~= "PromptAnchor" and not d:GetAttribute("Persistent") then
 		junk = d
 	end
 end
@@ -461,6 +511,31 @@ M.context = "client"
 BotFollowers = require(client.BotFollowers)
 M.context = "server"
 check(BotFollowers.count(player) == 1, "client renders the bot follower")
+local followerFolder = S.Workspace:FindFirstChild("BotFollowers")
+local followerParts = 0
+for _, d in followerFolder:GetDescendants() do
+	if d:IsA("BasePart") then
+		followerParts += 1
+	end
+end
+check(followerParts > 15, `follower is the detailed bot model ({followerParts} parts)`)
+check(gui:FindFirstChild("HatchOverlay") ~= nil, "hatch overlay exists")
+-- Drive the 3D crate-opening animation frame by frame.
+local sawCrate, sawBot = false, false
+for _ = 1, 160 do
+	S.RunService.RenderStepped:Fire()
+	M.advance(1 / 30)
+	local stage = gui.HatchOverlay.Stage
+	for _, d in stage:GetDescendants() do
+		if d:IsA("Model") and d.Name:sub(1, 6) == "Crate_" then
+			sawCrate = true
+		elseif d:IsA("Model") and Bots.ById[d.Name] then
+			sawBot = true
+		end
+	end
+end
+check(sawCrate and sawBot, "hatch shows the 3D crate, then the 3D bot")
+check(gui.HatchOverlay.Visible == false, "hatch animation finishes and closes")
 M.advance(3)
 ok = request("Hatch", "Rusty", 3)
 check(ok and #profile().Bots == 4, "triple hatch")
@@ -578,8 +653,8 @@ check(lastRemote("Announce") and lastRemote("Announce").args[1]:find("GOLDEN") ~
 local goldZone = goldenPile:GetAttribute("ZoneId")
 check(profile().Zones[goldZone], "golden pile is in a zone the player can reach")
 local pieceColor
-for _, d in goldenPile:GetChildren() do
-	if d.Name == "Junk" then
+for _, d in goldenPile:GetDescendants() do
+	if d:IsA("BasePart") and d.Name ~= "PromptAnchor" and not d:GetAttribute("Persistent") then
 		pieceColor = d.Color
 	end
 end
@@ -623,6 +698,13 @@ check(math.abs(Formulas.indexBonus(profile()) - bonusBefore - 0.05) < 1e-6 or Fo
 S.ReplicatedStorage.Remotes.OpenPanel:FireClient(player, "Index")
 M.advance(0.2)
 check(gui.IndexPanel.Visible, "index window opens")
+local views = 0
+for _, d in gui.IndexPanel:GetDescendants() do
+	if d:IsA("ViewportFrame") then
+		views += 1
+	end
+end
+check(views == 42, `index shows a 3D model for all 42 items ({views})`)
 
 ---------------------------------------------------------------- rebirth
 print("== Rebirth")

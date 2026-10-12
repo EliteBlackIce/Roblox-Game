@@ -4,22 +4,25 @@
 
 local State = require(script.Parent.Parent.State)
 local Theme = require(script.Parent.Theme)
+local Viewport = require(script.Parent.Viewport)
 local Windows = require(script.Parent.Windows)
+local Art = game:GetService("ReplicatedStorage").Shared.Art
 
 local C = Theme.Colors
 
 local Menu = {}
 
+-- Each button shows a 3D icon: { art module, model id }.
 local ENTRIES = {
-	{ Panel = "Bots", Label = "Bots", Color = C.Purple },
-	{ Panel = "Quests", Label = "Quests", Color = C.Accent },
-	{ Panel = "Index", Label = "Index", Color = C.Good },
-	{ Panel = "Rebirth", Label = "Rebirth", Color = C.Tokens },
-	{ Panel = "Boosts", Label = "Boosts", Color = C.Gems },
-	{ Panel = "Teleport", Label = "Teleport", Color = C.Info },
-	{ Panel = "Codes", Label = "Codes", Color = Color3.fromRGB(80, 200, 160) },
-	{ Panel = "Settings", Label = "Settings", Color = C.Disabled },
-	{ Panel = "Store", Label = "Store", Color = C.Orange },
+	{ Panel = "Bots", Label = "Bots", Color = C.Purple, Icon = { "BotArt", "TinDrone" } },
+	{ Panel = "Quests", Label = "Quests", Color = C.Accent, Icon = { "Items", "SunkenTreasure" } },
+	{ Panel = "Index", Label = "Index", Color = C.Good, Icon = { "Items", "GoldenRobotHead" } },
+	{ Panel = "Rebirth", Label = "Rebirth", Color = C.Tokens, Icon = { "Items", "CosmicShard" } },
+	{ Panel = "Boosts", Label = "Boosts", Color = C.Gems, Icon = { "Items", "OldBattery" } },
+	{ Panel = "Teleport", Label = "Teleport", Color = C.Info, Icon = { "Items", "SatelliteDish" } },
+	{ Panel = "Codes", Label = "Codes", Color = Color3.fromRGB(80, 200, 160), Icon = { "Items", "CircuitBoard" } },
+	{ Panel = "Settings", Label = "Settings", Color = C.Disabled, Icon = { "Items", "AncientGear" } },
+	{ Panel = "Store", Label = "Store", Color = C.Orange, Icon = { "Items", "GoldenToaster" } },
 }
 
 function Menu.init(screen: ScreenGui, showStore: boolean)
@@ -27,12 +30,12 @@ function Menu.init(screen: ScreenGui, showStore: boolean)
 		Name = "Menu",
 		AnchorPoint = Vector2.new(0, 0.5),
 		Position = UDim2.new(0, 12, 0.66, 0),
-		Size = UDim2.fromOffset(132, 0),
+		Size = UDim2.fromOffset(152, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		Parent = screen,
 	}, {
-		Theme.create("UIGridLayout", { CellSize = UDim2.fromOffset(62, 54), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+		Theme.create("UIGridLayout", { CellSize = UDim2.fromOffset(72, 72), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 
 	local badges: { [string]: Frame } = {}
@@ -42,12 +45,23 @@ function Menu.init(screen: ScreenGui, showStore: boolean)
 				Name = entry.Panel .. "Button",
 				LayoutOrder = i,
 				BackgroundColor3 = entry.Color,
-				Text = entry.Label,
-				MaxTextSize = 15,
+				Text = "",
 				Parent = frame,
 			}, function()
 				Windows.toggle(entry.Panel)
 			end)
+			local icon = (require(Art:FindFirstChild(entry.Icon[1]) :: ModuleScript) :: any).build(entry.Icon[2])
+			Viewport.new(button, icon, { Size = UDim2.new(1, 0, 1, -16), Active = false }, { Yaw = 30, Pitch = 18, Zoom = 1.15 })
+			local label = Theme.label({
+				AnchorPoint = Vector2.new(0, 1),
+				Position = UDim2.fromScale(0, 1),
+				Size = UDim2.new(1, 0, 0, 18),
+				Text = entry.Label,
+				Font = Theme.TitleFont,
+				MaxTextSize = 15,
+				Parent = button,
+			})
+			Theme.textStroke().Parent = label
 			badges[entry.Panel] = Theme.create("Frame", {
 				Name = "Badge",
 				AnchorPoint = Vector2.new(0.5, 0.5),

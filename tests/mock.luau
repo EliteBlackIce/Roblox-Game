@@ -232,9 +232,21 @@ NumberSequence = {
 	end,
 }
 ColorSequence = {
-	new = function(a)
-		assert(type(a) == "table" and a.__type == "Color3", "ColorSequence.new expects Color3 here")
-		return plain("ColorSequence", { Keypoints = a })
+	new = function(a, b)
+		assert(type(a) == "table", "ColorSequence.new expects Color3(s) or keypoints")
+		if a.__type == "Color3" then
+			return plain("ColorSequence", { Keypoints = a })
+		end
+		for _, kp in a do
+			assert(kp.__type == "ColorSequenceKeypoint", "bad keypoint")
+		end
+		return plain("ColorSequence", { Keypoints = a[1].Value })
+	end,
+}
+ColorSequenceKeypoint = {
+	new = function(t, c)
+		assert(type(t) == "number" and type(c) == "table" and c.__type == "Color3", "ColorSequenceKeypoint.new(number, Color3)")
+		return plain("ColorSequenceKeypoint", { Time = t, Value = c })
 	end,
 }
 TweenInfo = {
@@ -290,11 +302,19 @@ CFrame.lookAt = function(pos, target, up)
 	local upv = right:Cross(look)
 	return cf(pos, { right.X, upv.X, -look.X, right.Y, upv.Y, -look.Y, right.Z, upv.Z, -look.Z })
 end
+CFrame.identity = cf(v3(0, 0, 0), I)
 CFrameMeta.__index = function(self, k)
 	local r = rawget(self, "r")
 	if k == "Lerp" then
 		return function(a, b, t)
 			return cf(a.p:Lerp(b.p, t), b.r)
+		end
+	end
+	if k == "Inverse" then
+		return function(a)
+			local m = a.r
+			local rt = { m[1], m[4], m[7], m[2], m[5], m[8], m[3], m[6], m[9] }
+			return cf(-matvec(rt, a.p), rt)
 		end
 	end
 	if k == "Position" then
@@ -321,6 +341,10 @@ CFrameMeta.__mul = function(a, b)
 		return a.p + matvec(a.r, b)
 	end
 	error("bad CFrame multiplication", 2)
+end
+CFrameMeta.__sub = function(a, b)
+	assert(getmetatable(b) == Vector3Meta, "CFrame - expects Vector3")
+	return cf(a.p - b, a.r)
 end
 CFrameMeta.__add = function(a, b)
 	assert(getmetatable(b) == Vector3Meta, "CFrame + expects Vector3")
@@ -426,7 +450,7 @@ local SUPER = {
 
 local BASEPART = {
 	"Anchored", "Size", "CFrame", "Position", "Color", "Material", "Transparency", "Reflectance", "CanCollide",
-	"CastShadow", "TopSurface", "BottomSurface", "Massless", "CanQuery", "CanTouch", "Orientation",
+	"CastShadow", "TopSurface", "BottomSurface", "Massless", "CanQuery", "CanTouch", "Orientation", "AssemblyLinearVelocity",
 }
 local GUIOBJ = {
 	"Size", "Position", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency", "Visible", "LayoutOrder",
@@ -449,7 +473,7 @@ local PROPS = {
 	Part = merge(BASEPART, { "Shape" }),
 	WedgePart = merge(BASEPART),
 	SpawnLocation = merge(BASEPART, { "Shape", "Duration", "Neutral", "TeamColor", "AllowTeamChangeOnTouch", "Enabled" }),
-	Model = merge({ "PrimaryPart", "WorldPivot" }),
+	Model = merge({ "PrimaryPart", "WorldPivot", "ModelStreamingMode" }),
 	Folder = merge({}),
 	SurfaceGui = merge({ "Face", "SizingMode", "PixelsPerStud", "LightInfluence", "Adornee", "AlwaysOnTop", "CanvasSize", "Enabled", "ZIndexBehavior" }),
 	BillboardGui = merge({ "Size", "StudsOffset", "StudsOffsetWorldSpace", "MaxDistance", "LightInfluence", "Adornee", "AlwaysOnTop", "Enabled" }),
@@ -544,6 +568,7 @@ local function newInstance(className)
 		props.Transparency = 0
 		props.CanCollide = true
 		props.Anchored = false
+		props.AssemblyLinearVelocity = Vector3.zero
 	end
 	if className == "ProximityPrompt" then
 		props.Enabled = true
@@ -849,6 +874,12 @@ end
 function Methods.GetNameFromUserIdAsync(self, userId)
 	return "User" .. tostring(userId)
 end
+function Methods.BulkMoveTo(self, parts, cframes)
+	M.bulkMoves = (M.bulkMoves or 0) + 1
+	for i, part in parts do
+		part.CFrame = cframes[i]
+	end
+end
 function Methods.Kick(self, msg)
 	print("KICK " .. tostring(msg))
 end
@@ -938,6 +969,9 @@ function CollectionService:GetTagged(tag)
 		end
 	end
 	return out
+end
+function CollectionService:GetInstanceRemovedSignal(tag)
+	return Signal.new()
 end
 function CollectionService:GetInstanceAddedSignal(tag)
 	tagSignals[tag] = tagSignals[tag] or Signal.new()
