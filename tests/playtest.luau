@@ -274,6 +274,17 @@ check(WorldAnimator.count() >= 20, `world animator drives the hover models ({Wor
 S.RunService.RenderStepped:Fire()
 M.advance(0.05)
 check((M.bulkMoves or 0) > 0, "hover animation moves parts with BulkMoveTo")
+M.context = "client"
+check(require(client.AmbientLife).count() >= 20, "ambient clouds and butterflies spawned")
+M.context = "server"
+local keepers = 0
+for _, d in map:GetDescendants() do
+	if d.Name == "Keeper" then
+		keepers += 1
+	end
+end
+check(keepers >= 9, `pet shopkeepers at the stations ({keepers})`)
+check(#CS:GetTagged("Outline") > 100, "plenty of models tagged for ink outlines")
 local heapPiles = pilesIn("ScrapHeap")
 check(math.abs(heapPiles[1].PromptAnchor.CollectPrompt.HoldDuration - 1.6) < 1e-6, "client sets hold duration to cooldown")
 local carGate = tagged("ZoneGate", "ZoneId", "CarGraveyard")

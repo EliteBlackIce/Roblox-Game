@@ -18,6 +18,7 @@ local Hud = require(script.Parent.UI.Hud)
 local Menu = require(script.Parent.UI.Menu)
 local Notifications = require(script.Parent.UI.Notifications)
 local Windows = require(script.Parent.UI.Windows)
+local AmbientLife = require(script.Parent.AmbientLife)
 local Outliner = require(script.Parent.Outliner)
 local WorldAnimator = require(script.Parent.WorldAnimator)
 local Screens = script.Parent.UI.Screens
@@ -55,6 +56,7 @@ local function focus(): Vector3?
 end
 WorldAnimator.init(focus)
 Outliner.init(focus)
+AmbientLife.init(focus)
 
 -- Collect prompts hold for as long as the player's cooldown, so the speed
 -- upgrades are felt directly. The server enforces the real cooldown.
@@ -78,6 +80,7 @@ State.listen(function(state)
 	Hud.update(state)
 	Effects.muted = state.Settings.Sfx == false
 	Effects.lowFx = state.Settings.LowFx == true
+	AmbientLife.setEnabled(not Effects.lowFx)
 	if state.Cooldown ~= holdDuration then
 		holdDuration = state.Cooldown
 		applyHoldToAll()

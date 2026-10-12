@@ -28,35 +28,41 @@ local function pop(object: GuiObject)
 	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 end
 
+-- Pet-Sim style counter: a rounded pill with a round coloured icon bubble.
 local function currencyRow(parent: Instance, name: string, order: number, color: Color3, icon: string): TextLabel
+	local big = name == "Cash"
+	local height = if big then 44 else 34
 	local row = Theme.create("Frame", {
 		Name = name,
 		LayoutOrder = order,
-		Size = UDim2.new(1, 0, 0, if name == "Cash" then 40 else 28),
-		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundColor3 = C.Panel,
 		Parent = parent,
+	}, {
+		Theme.create("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		Theme.stroke(3),
+		Theme.gloss(0.12),
 	})
 	local badge = Theme.create("Frame", {
-		Size = UDim2.fromOffset(if name == "Cash" then 34 else 24, if name == "Cash" then 34 else 24),
-		AnchorPoint = Vector2.new(0, 0.5),
-		Position = UDim2.fromScale(0, 0.5),
+		Size = UDim2.fromOffset(height + 6, height + 6),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0, height / 2 - 4, 0.5, 0),
 		BackgroundColor3 = color,
-		Rotation = 45,
+		ZIndex = 2,
 		Parent = row,
-	}, { Theme.corner(6), Theme.stroke(2) })
-	Theme.label({ Size = UDim2.fromScale(1, 1), Rotation = -45, Text = icon, Font = Theme.TitleFont, TextColor3 = C.Stroke, MaxTextSize = 18, Parent = badge })
+	}, { Theme.create("UICorner", { CornerRadius = UDim.new(0.5, 0) }), Theme.stroke(3), Theme.gloss(0.3) })
+	Theme.label({ Size = UDim2.fromScale(1, 1), Text = icon, Font = Theme.TitleFont, TextColor3 = C.OnColor, ZIndex = 2, MaxTextSize = if big then 26 else 20, Parent = badge })
 	local label = Theme.label({
 		Name = "Value",
-		Position = UDim2.fromOffset(if name == "Cash" then 46 else 34, 0),
-		Size = UDim2.new(1, -46, 1, 0),
+		Position = UDim2.fromOffset(height + 8, 0),
+		Size = UDim2.new(1, -(height + 14), 1, 0),
 		Text = "0",
 		Font = Theme.TitleFont,
-		TextColor3 = color,
+		TextColor3 = C.Text,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		MaxTextSize = if name == "Cash" then 36 else 24,
+		MaxTextSize = if big then 32 else 22,
 		Parent = row,
 	})
-	Theme.textStroke().Parent = label
 	return label
 end
 
@@ -64,21 +70,21 @@ function Hud.init(screen: ScreenGui, onRemoteSell: () -> ())
 	local stats = Theme.create("Frame", {
 		Name = "StatsPanel",
 		Position = UDim2.fromOffset(12, 12),
-		Size = UDim2.fromOffset(250, 0),
+		Size = UDim2.fromOffset(262, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundColor3 = C.Panel,
-		BackgroundTransparency = 0.08,
 		Parent = screen,
 	}, {
-		Theme.corner(14),
-		Theme.stroke(3),
-		Theme.padding(10),
-		Theme.create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }),
+		Theme.corner(18),
+		Theme.stroke(4),
+		Theme.gloss(0.1),
+		Theme.padding(12),
+		Theme.create("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 
 	refs.cash = currencyRow(stats, "Cash", 1, C.Cash, "$")
-	refs.gems = currencyRow(stats, "Gems", 2, C.Gems, "G")
-	refs.tokens = currencyRow(stats, "Tokens", 3, C.Tokens, "R")
+	refs.gems = currencyRow(stats, "Gems", 2, C.Gems, "◆")
+	refs.tokens = currencyRow(stats, "Tokens", 3, C.Tokens, "★")
 	refs.tokensRow = refs.tokens.Parent
 
 	refs.capacityText = Theme.label({

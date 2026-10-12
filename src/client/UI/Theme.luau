@@ -184,8 +184,11 @@ function Theme.bar(parent: Instance, props: Props, color: Color3): (Frame, Frame
 	for key, value in props do
 		defaults[key] = value
 	end
-	local bar = Theme.create("Frame", defaults, { Theme.corner(8) })
-	local fill = Theme.create("Frame", { Name = "Fill", Size = UDim2.fromScale(0, 1), BackgroundColor3 = color, Parent = bar }, { Theme.corner(8) })
+	local bar = Theme.create("Frame", defaults, { Theme.create("UICorner", { CornerRadius = UDim.new(0.5, 0) }), Theme.stroke(2.5) })
+	local fill = Theme.create("Frame", { Name = "Fill", Size = UDim2.fromScale(0, 1), BackgroundColor3 = color, Parent = bar }, {
+		Theme.create("UICorner", { CornerRadius = UDim.new(0.5, 0) }),
+		Theme.gloss(0.35),
+	})
 	return bar, fill
 end
 

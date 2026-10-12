@@ -52,16 +52,16 @@ function Menu.init(screen: ScreenGui, showStore: boolean)
 			end)
 			local icon = (require(Art:FindFirstChild(entry.Icon[1]) :: ModuleScript) :: any).build(entry.Icon[2])
 			Viewport.new(button, icon, { Size = UDim2.new(1, 0, 1, -16), Active = false }, { Yaw = 30, Pitch = 18, Zoom = 1.15 })
-			local label = Theme.label({
+			Theme.label({
 				AnchorPoint = Vector2.new(0, 1),
 				Position = UDim2.fromScale(0, 1),
 				Size = UDim2.new(1, 0, 0, 18),
 				Text = entry.Label,
 				Font = Theme.TitleFont,
-				MaxTextSize = 15,
+				TextColor3 = C.OnColor,
+				MaxTextSize = 16,
 				Parent = button,
 			})
-			Theme.textStroke().Parent = label
 			badges[entry.Panel] = Theme.create("Frame", {
 				Name = "Badge",
 				AnchorPoint = Vector2.new(0.5, 0.5),
@@ -71,7 +71,7 @@ function Menu.init(screen: ScreenGui, showStore: boolean)
 				Visible = false,
 				ZIndex = 3,
 				Parent = button,
-			}, { Theme.corner(10), Theme.stroke(2), Theme.label({ Size = UDim2.fromScale(1, 1), Text = "!", Font = Theme.TitleFont, ZIndex = 3, MaxTextSize = 16 }) })
+			}, { Theme.corner(10), Theme.stroke(2), Theme.label({ Size = UDim2.fromScale(1, 1), Text = "!", Font = Theme.TitleFont, TextColor3 = C.OnColor, ZIndex = 3, MaxTextSize = 16 }) })
 		end
 	end
 

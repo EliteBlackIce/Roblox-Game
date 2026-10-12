@@ -17,6 +17,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage.Shared
 local BotArt = require(Shared.Art.BotArt)
+local Items = require(Shared.Art.Items)
 local Bots = require(Shared.Bots)
 local Kit = require(Shared.Art.Kit)
 local Zones = require(Shared.Zones)
@@ -339,6 +340,47 @@ THEMES.CrashSite = function(folder, z0)
 	end
 end
 
+-- Small life on the ground: grass tufts, flowers and loose bits of the zone's
+-- scrap lying around, kept off the road and away from the piles' rows.
+local function scatter(folder: Instance, zone: Zones.Zone, z0: number)
+	local detail = Builder.folder(folder, "Detail")
+	local grass = zone.Theme.Ground:Lerp(Color3.fromRGB(110, 200, 90), 0.55)
+	local loose = StationArt.pileItems(zone)
+	for _ = 1, 28 do
+		local side = if rng:NextNumber() < 0.5 then -1 else 1
+		local x = side * rng:NextNumber(16, 96)
+		local depth = rng:NextNumber(8, 195)
+		-- Skip spots right on top of a pile row.
+		local nearRow = false
+		for _, row in { 50, 90, 130, 170 } do
+			if math.abs(depth - row) < 7 and (math.abs(math.abs(x) - 28) < 8 or math.abs(math.abs(x) - 62) < 8) then
+				nearRow = true
+			end
+		end
+		if not nearRow then
+			local base = CN(x, 0, z0 - depth)
+			local roll = rng:NextNumber()
+			if roll < 0.55 then
+				for i = 1, 3 do
+					Kit.pillBetween(detail, (base * CN((i - 2) * 0.35, 0, 0)).Position, (base * CN((i - 2) * 0.6, 1.1 + i % 2 * 0.4, (i - 2) * 0.2)).Position, 0.32, if i == 2 then Kit.shade(grass, 0.12) else grass)
+				end
+			elseif roll < 0.75 then
+				Props.flowers(detail, base, rng)
+			else
+				local item = Items.build(loose[rng:NextInteger(1, #loose)])
+				Kit.scale(item, 0.7)
+				Kit.placeOnGround(item, base * ANG(0, rng:NextNumber(0, math.pi * 2), rad(rng:NextNumber(-25, 25))))
+				for _, d in item:GetDescendants() do
+					if d:IsA("ParticleEmitter") then
+						d:Destroy()
+					end
+				end
+				item.Parent = detail
+			end
+		end
+	end
+end
+
 local function zoneLot(map: Instance, zone: Zones.Zone)
 	local folder = Builder.folder(map, "Zone_" .. zone.Id)
 	local z0 = gateZ(zone.Order)
@@ -358,6 +400,7 @@ local function zoneLot(map: Instance, zone: Zones.Zone)
 	if theme then
 		theme(folder, z0)
 	end
+	scatter(folder, zone, z0)
 	for _, depth in { 60, 140 } do
 		Props.lamp(folder, at(z0, -14, depth), zone.Theme.Accent)
 		Props.lamp(folder, at(z0, 14, depth + 40), zone.Theme.Accent)

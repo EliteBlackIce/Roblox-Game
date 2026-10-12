@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage.Shared
 local Bots = require(Shared.Bots)
 local Config = require(Shared.Config)
+local BotArt = require(Shared.Art.BotArt)
 local CrateArt = require(Shared.Art.CrateArt)
 local Formulas = require(Shared.Formulas)
 local Items = require(Shared.Art.Items)
@@ -59,6 +60,17 @@ local function floatingSign(parent: Instance, text: string, cf: CFrame, size: Ve
 		hover(sign, 0, 0.6)
 	end
 	return sign
+end
+
+-- A pet shopkeeper standing at `cf` (facing cf's LookVector), gently bobbing.
+local function keeper(parent: Instance, botId: string, cf: CFrame, scale: number)
+	local pet = BotArt.build(botId)
+	pet.Name = "Keeper"
+	Kit.scale(pet, scale)
+	Kit.placeOnGround(pet, cf)
+	pet.Parent = parent
+	hover(pet, 0, 0.35)
+	return pet
 end
 
 local function prompt(model: Instance, position: Vector3, name: string, action: string, object: string, hold: number, distance: number): BasePart
@@ -116,6 +128,7 @@ function StationArt.sellMachine(parent: Instance, base: CFrame, accent: Color3)
 	Kit.coin(coin, at(0, 19, 4) * ANG(0, rad(90), 0), 5.5, YELLOW, { Neon = false })
 	hover(coin, 90, 0.8)
 
+	keeper(m, "TinDrone", at(-8.5, 3, -2.5), 1.4)
 	floatingSign(m, "$ SELL $", at(0, 15.5, 0.2), Vector2.new(10, 3), GREEN, WHITE, false)
 	local anchor = prompt(m, at(0, 3, -5).Position, "SellPrompt", "Sell Backpack", "Scrap Buyer", 0.25, 14)
 	Builder.billboard(anchor, "SELL", GREEN, 22)
@@ -189,6 +202,7 @@ function StationArt.upgradeShop(parent: Instance, base: CFrame)
 	Kit.wedge(arrow, at(1.2, 27.8, 2) * ANG(0, rad(-90), 0), Vector3.new(0.8, 1.6, 2.4), rgb(120, 255, 140), { Neon = true })
 	hover(arrow, 60, 0.8)
 
+	keeper(m, "BoltBot", at(0, 0.7, -1.2), 1.6)
 	floatingSign(m, "UPGRADES", at(0, 15.6, -10.5), Vector2.new(13, 3), blue, YELLOW, false)
 	local anchor = prompt(m, at(0, 3, -7.5).Position, "ShopPrompt", "Open", "Upgrades", 0, 13)
 	Builder.billboard(anchor, "UPGRADES", YELLOW, 26)
@@ -224,6 +238,7 @@ function StationArt.toolShop(parent: Instance, base: CFrame)
 	Kit.roundBox(m, at(-9, 1.6, -6), Vector3.new(2, 2.4, 2), 0.3, DARK, SOLID, false)
 	Kit.roundBox(m, at(-9, 3.2, -6), Vector3.new(4, 1, 2), 0.3, rgb(80, 82, 95), nil, false)
 
+	keeper(m, "GearGolem", at(3, 0.7, -1.2), 1.5)
 	floatingSign(m, "TOOL SHOP", at(0, 15.6, -10.5), Vector2.new(13, 3), orange, WHITE, false)
 	local anchor = prompt(m, at(0, 3, -7.5).Position, "ShopPrompt", "Open", "Tool Shop", 0, 13)
 	Builder.billboard(anchor, "TOOLS", YELLOW, 26)
@@ -334,6 +349,7 @@ function StationArt.rebirthAltar(parent: Instance, base: CFrame)
 	hover(crystal, 30, 1.0)
 	Kit.sparkle(Kit.ball(m, at(0, 9, 0), 0.5, pink, { Neon = true }), pink, 6)
 
+	keeper(m, "CosmicCore", at(7.5, 3.5, -5), 1.3)
 	floatingSign(m, "REBIRTH", at(0, 19, 3), Vector2.new(11, 3), purple, WHITE, true)
 	local anchor = prompt(m, at(0, 4, -8).Position, "OpenPrompt", "Rebirth", "Rebirth Altar", 0, 14)
 	Builder.billboard(anchor, "REBIRTH", pink, 24)

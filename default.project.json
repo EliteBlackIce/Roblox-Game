@@ -32,24 +32,25 @@
       "$properties": {
         "Ambient": {
           "Color3": [
-            0.47059,
-            0.45098,
-            0.5098
+            0.58824,
+            0.54902,
+            0.68627
           ]
         },
-        "Brightness": 3.2,
-        "ClockTime": 14,
-        "EnvironmentDiffuseScale": 0.5,
-        "EnvironmentSpecularScale": 0.3,
-        "GeographicLatitude": 25,
+        "Brightness": 2.4,
+        "ClockTime": 14.2,
+        "EnvironmentDiffuseScale": 0,
+        "EnvironmentSpecularScale": 0,
+        "GeographicLatitude": 30,
         "GlobalShadows": true,
         "OutdoorAmbient": {
           "Color3": [
-            0.64706,
-            0.64706,
-            0.70588
+            0.68627,
+            0.66667,
+            0.78431
           ]
         },
+        "ShadowSoftness": 0.08,
         "Technology": "ShadowMap"
       }
     }
