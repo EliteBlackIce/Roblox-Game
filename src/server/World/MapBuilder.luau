@@ -1,690 +1,643 @@
 --!strict
--- Builds the whole scrapyard out of anchored parts.
+-- Builds the whole low-poly scrapyard out of anchored, solid-colour parts.
 --
--- Runs automatically when the server starts if Workspace has no "Junkyard" model.
--- To bake the map into the place permanently (so you can hand-edit it in Studio),
--- paste this into the Studio command bar while NOT playtesting, then save:
+-- The published place already contains the baked result (map/), so this only
+-- runs when Workspace has no "Junkyard" model. To rebuild the map in Studio's
+-- edit mode, delete Workspace.Junkyard and run in the command bar:
 --   require(game.ServerScriptService.Server.World.MapBuilder).build()
 --
--- Layout (north is -Z):
---   South gate + spawn (z ~ 185) -> road north -> Hub plaza (z ~ 70) with SELL (west) and SHOP (east)
---   Front Heap (centre), Car Graveyard (north-west), Back Lot (north-east, rarer finds)
+-- Layout (north is -Z): the Hub sits at z 100..-100. Six 200-stud zone lots
+-- follow north along one main road, each behind a gate that unlocks with cash.
 
 local CollectionService = game:GetService("CollectionService")
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local Bots = require(ReplicatedStorage.Shared.Bots)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Zones = require(ReplicatedStorage.Shared.Zones)
 local Builder = require(script.Parent.Builder)
+local Props = require(script.Parent.Props)
 
 local MapBuilder = {}
 
-local rng = Random.new(1337) -- fixed seed: same layout every time
+local rng = Random.new(2024) -- fixed seed: same layout every time
+
+local HALF_WIDTH = 100
+local ZONE_LENGTH = 200
+local HUB_SOUTH = 100
+local FIRST_GATE = -100
+local END_Z = FIRST_GATE - ZONE_LENGTH * #Zones.List
+
+local function rgb(r: number, g: number, b: number): Color3
+	return Color3.fromRGB(r, g, b)
+end
 
 local C = {
-	Dirt = Color3.fromRGB(122, 98, 72),
-	Gravel = Color3.fromRGB(150, 140, 125),
-	Road = Color3.fromRGB(70, 68, 66),
-	Concrete = Color3.fromRGB(170, 168, 160),
-	Rust = Color3.fromRGB(150, 75, 40),
-	DarkRust = Color3.fromRGB(105, 55, 35),
-	Steel = Color3.fromRGB(150, 155, 165),
-	DarkSteel = Color3.fromRGB(80, 84, 92),
-	Yellow = Color3.fromRGB(245, 190, 40),
-	Black = Color3.fromRGB(28, 28, 30),
-	Green = Color3.fromRGB(60, 200, 90),
-	Blue = Color3.fromRGB(50, 130, 230),
-	White = Color3.fromRGB(255, 255, 255),
+	Grass = rgb(120, 200, 95),
+	GrassDark = rgb(95, 175, 80),
+	Plaza = rgb(225, 220, 205),
+	PlazaTrim = rgb(195, 188, 172),
+	Road = rgb(85, 88, 98),
+	RoadLine = rgb(250, 215, 70),
+	Fence = rgb(110, 115, 128),
+	Post = rgb(250, 195, 50),
+	White = rgb(255, 255, 255),
+	Dark = rgb(55, 58, 66),
+	Green = rgb(70, 200, 100),
+	Blue = rgb(60, 140, 235),
+	Purple = rgb(170, 90, 240),
+	Pink = rgb(255, 110, 190),
+	Yellow = rgb(255, 205, 60),
+	Orange = rgb(255, 140, 50),
+	Wood = rgb(170, 120, 75),
 }
 
-local CAR_COLORS = {
-	Color3.fromRGB(150, 60, 50),
-	Color3.fromRGB(70, 100, 140),
-	Color3.fromRGB(90, 120, 80),
-	Color3.fromRGB(190, 160, 90),
-	Color3.fromRGB(120, 110, 105),
-}
+local function gateZ(order: number): number
+	return FIRST_GATE - (order - 1) * ZONE_LENGTH
+end
 
-local JUNK_COLORS = {
-	C.Rust,
-	C.DarkRust,
-	C.Steel,
-	C.DarkSteel,
-	Color3.fromRGB(200, 120, 60), -- copper
-	Color3.fromRGB(60, 110, 70), -- circuit green
-	Color3.fromRGB(180, 170, 60), -- faded yellow
-}
+-- A CFrame on the ground at (x, z) whose front (-Z / LookVector) faces `facing`.
+local function facing(x: number, z: number, dir: Vector3): CFrame
+	local pos = Vector3.new(x, 0, z)
+	return CFrame.lookAt(pos, pos + dir)
+end
 
-local MAP_HALF = 170 -- fence runs along +-MAP_HALF
-local GATE_HALF = 14
+local EAST = Vector3.new(1, 0, 0)
+local WEST = Vector3.new(-1, 0, 0)
+local SOUTH = Vector3.new(0, 0, 1)
 
-local function ground(parent: Instance)
-	Builder.part(parent, {
-		Name = "Ground",
-		Size = Vector3.new(460, 4, 460),
-		CFrame = CFrame.new(0, -2, 10),
-		Color = C.Dirt,
-		Material = Enum.Material.Ground,
-	})
-	-- Patches of gravel break up the flat dirt.
-	for _ = 1, 14 do
-		local size = rng:NextNumber(18, 40)
-		Builder.part(parent, {
-			Name = "GravelPatch",
-			Size = Vector3.new(size, 0.1, size * rng:NextNumber(0.6, 1.2)),
-			CFrame = CFrame.new(rng:NextNumber(-150, 150), 0.02, rng:NextNumber(-150, 150))
-				* CFrame.Angles(0, rng:NextNumber(0, math.pi), 0),
-			Color = C.Gravel,
-			Material = Enum.Material.Pebble,
-			CastShadow = false,
-		})
+---------------------------------------------------------------- ground & fences
+
+local function ground(map: Instance)
+	local folder = Builder.folder(map, "Ground")
+	local length = HUB_SOUTH - END_Z + 600
+	Builder.box(folder, "Grass", Vector3.new(900, 4, length), Vector3.new(0, -2.05, (HUB_SOUTH + END_Z) / 2), C.Grass)
+
+	Builder.box(folder, "HubFloor", Vector3.new(HALF_WIDTH * 2, 1, HUB_SOUTH - FIRST_GATE), Vector3.new(0, -0.45, (HUB_SOUTH + FIRST_GATE) / 2), C.Plaza)
+	-- Checker accents on the plaza.
+	for x = -80, 80, 40 do
+		for z = 80, -80, -40 do
+			if (x // 40 + z // 40) % 2 == 0 then
+				Builder.box(folder, "PlazaTile", Vector3.new(38, 0.2, 38), Vector3.new(x, 0.06, z), C.PlazaTrim).CastShadow = false
+			end
+		end
+	end
+
+	for _, zone in Zones.List do
+		local z0 = gateZ(zone.Order)
+		Builder.box(folder, "ZoneFloor", Vector3.new(HALF_WIDTH * 2, 1, ZONE_LENGTH), Vector3.new(0, -0.45, z0 - ZONE_LENGTH / 2), zone.Theme.Ground)
+	end
+
+	-- Main road from the hub to the far end, with dashed centre line.
+	local roadLength = FIRST_GATE - END_Z
+	Builder.box(folder, "Road", Vector3.new(22, 0.2, roadLength), Vector3.new(0, 0.08, (FIRST_GATE + END_Z) / 2), C.Road).CastShadow = false
+	for z = FIRST_GATE - 6, END_Z + 6, -14 do
+		Builder.box(folder, "RoadLine", Vector3.new(1, 0.1, 7), Vector3.new(0, 0.22, z), C.RoadLine).CastShadow = false
 	end
 end
 
-local function fenceSegment(parent: Instance, from: Vector3, to: Vector3)
+local function fenceRun(folder: Instance, from: Vector3, to: Vector3)
+	local step = 25
 	local length = (to - from).Magnitude
-	local mid = (from + to) / 2
-	local look = CFrame.lookAt(mid, to)
-	Builder.part(parent, {
-		Name = "FencePanel",
-		Size = Vector3.new(0.3, 9, length),
-		CFrame = look + Vector3.new(0, 4.5, 0),
-		Color = C.DarkSteel,
-		Material = Enum.Material.DiamondPlate,
-		Transparency = 0.15,
-	})
-	Builder.part(parent, {
-		Name = "FenceRail",
-		Size = Vector3.new(0.5, 0.5, length),
-		CFrame = look + Vector3.new(0, 9.2, 0),
-		Color = C.Rust,
-		Material = Enum.Material.CorrodedMetal,
-	})
-	Builder.cylinder(parent, "FencePost", from + Vector3.new(0, 5, 0), 10, 0.9, C.Rust, Enum.Material.CorrodedMetal)
+	local count = math.max(1, math.ceil(length / step))
+	for i = 0, count - 1 do
+		local a = from:Lerp(to, i / count)
+		local b = from:Lerp(to, (i + 1) / count)
+		local mid = (a + b) / 2
+		local look = CFrame.lookAt(mid, b)
+		local segment = (b - a).Magnitude
+		Builder.part(folder, { Name = "FencePanel", Size = Vector3.new(0.6, 10, segment), CFrame = look + Vector3.new(0, 5, 0), Color = C.Fence })
+		Builder.part(folder, { Name = "FenceRail", Size = Vector3.new(1, 1, segment), CFrame = look + Vector3.new(0, 10.3, 0), Color = C.Post })
+		Builder.box(folder, "FencePost", Vector3.new(1.6, 12, 1.6), a + Vector3.new(0, 6, 0), C.Post)
+	end
+	Builder.box(folder, "FencePost", Vector3.new(1.6, 12, 1.6), to + Vector3.new(0, 6, 0), C.Post)
 end
 
-local function perimeterFence(parent: Instance)
-	local folder = Builder.folder(parent, "Fence")
-	local step = 34
-	local corners = {
-		Vector3.new(-MAP_HALF, 0, MAP_HALF),
-		Vector3.new(-MAP_HALF, 0, -MAP_HALF),
-		Vector3.new(MAP_HALF, 0, -MAP_HALF),
-		Vector3.new(MAP_HALF, 0, MAP_HALF),
-	}
-	-- West, north and east walls.
-	for i = 1, 3 do
-		local a, b = corners[i], corners[i + 1]
-		local count = math.ceil((b - a).Magnitude / step)
-		for s = 0, count - 1 do
-			fenceSegment(folder, a:Lerp(b, s / count), a:Lerp(b, (s + 1) / count))
-		end
-	end
-	-- South wall, split around the gate.
-	for _, side in { -1, 1 } do
-		local outer = Vector3.new(side * MAP_HALF, 0, MAP_HALF)
-		local inner = Vector3.new(side * GATE_HALF, 0, MAP_HALF)
-		local count = math.ceil((inner - outer).Magnitude / step)
-		for s = 0, count - 1 do
-			fenceSegment(folder, outer:Lerp(inner, s / count), outer:Lerp(inner, (s + 1) / count))
-		end
-	end
-	Builder.cylinder(folder, "FencePost", Vector3.new(MAP_HALF, 5, MAP_HALF), 10, 0.9, C.Rust, Enum.Material.CorrodedMetal)
+local function fences(map: Instance)
+	local folder = Builder.folder(map, "Fence")
+	fenceRun(folder, Vector3.new(-HALF_WIDTH, 0, HUB_SOUTH), Vector3.new(-HALF_WIDTH, 0, END_Z))
+	fenceRun(folder, Vector3.new(HALF_WIDTH, 0, HUB_SOUTH), Vector3.new(HALF_WIDTH, 0, END_Z))
+	fenceRun(folder, Vector3.new(-HALF_WIDTH, 0, HUB_SOUTH), Vector3.new(HALF_WIDTH, 0, HUB_SOUTH))
+	fenceRun(folder, Vector3.new(-HALF_WIDTH, 0, END_Z), Vector3.new(HALF_WIDTH, 0, END_Z))
 end
 
-local function entrance(parent: Instance)
-	local model = Builder.model(parent, "Entrance")
-	local z = MAP_HALF
-	for _, side in { -1, 1 } do
-		Builder.part(model, {
-			Name = "GatePillar",
-			Size = Vector3.new(3, 18, 3),
-			CFrame = CFrame.new(side * (GATE_HALF + 1.5), 9, z),
-			Color = C.Yellow,
-			Material = Enum.Material.DiamondPlate,
-		})
-		-- Hazard stripes on the pillars.
-		for stripe = 0, 3 do
-			Builder.part(model, {
-				Name = "Stripe",
-				Size = Vector3.new(3.1, 1, 3.1),
-				CFrame = CFrame.new(side * (GATE_HALF + 1.5), 2 + stripe * 2.2, z),
-				Color = C.Black,
-				Material = Enum.Material.SmoothPlastic,
-			})
-		end
-		-- An open gate swung back against the fence.
-		Builder.part(model, {
-			Name = "GateDoor",
-			Size = Vector3.new(0.4, 8, 12),
-			CFrame = CFrame.new(side * (GATE_HALF + 3.5), 4, z - 6.5),
-			Color = C.DarkSteel,
-			Material = Enum.Material.DiamondPlate,
-			Transparency = 0.2,
+---------------------------------------------------------------- stations
+
+local function sellStation(parent: Instance, base: CFrame, accent: Color3)
+	local model = Builder.model(parent, "SellStation")
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Pad", Size = Vector3.new(16, 0.6, 12), CFrame = at(0, 0.3, -4), Color = C.Green })
+	Builder.part(model, { Name = "PadTrim", Size = Vector3.new(17, 0.4, 13), CFrame = at(0, 0.2, -4), Color = C.White })
+	Builder.part(model, { Name = "Back", Size = Vector3.new(16, 10, 1), CFrame = at(0, 5, 3), Color = accent })
+	Builder.part(model, { Name = "Roof", Size = Vector3.new(18, 1, 8), CFrame = at(0, 10.5, 0), Color = C.Dark })
+	for _, x in { -7.5, 7.5 } do
+		Builder.part(model, { Name = "Pillar", Size = Vector3.new(1, 10, 1), CFrame = at(x, 5, -3), Color = C.White })
+	end
+	Builder.part(model, { Name = "Counter", Size = Vector3.new(10, 3.2, 2), CFrame = at(0, 1.6, 0), Color = C.White })
+	Builder.part(model, { Name = "Coin", Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.6, 3, 3), CFrame = at(0, 6.5, 2.3) * CFrame.Angles(0, math.rad(90), 0), Color = C.Yellow, Material = Enum.Material.Neon })
+	Builder.sign(model, "$ SELL $", at(0, 13, -0.5).Position, base.LookVector, Vector2.new(14, 4), C.Green, C.White)
+
+	local anchor = Builder.anchor(model, at(0, 3, -3).Position)
+	Builder.prompt(anchor, "SellPrompt", "Sell Backpack", "Scrap Buyer", 0.25, 14)
+	Builder.billboard(anchor, "SELL", C.Green, 14)
+	CollectionService:AddTag(model, "SellStation")
+end
+
+local function shopBuilding(parent: Instance, name: string, tag: string, base: CFrame, wall: Color3, title: string, marker: string)
+	local model = Builder.model(parent, name)
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Floor", Size = Vector3.new(22, 0.6, 16), CFrame = at(0, 0.3, 2), Color = C.PlazaTrim })
+	Builder.part(model, { Name = "BackWall", Size = Vector3.new(22, 13, 1), CFrame = at(0, 6.5, 9.5), Color = wall })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(-10.5, 6.5, 2), Color = wall })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(10.5, 6.5, 2), Color = wall })
+	Builder.part(model, { Name = "Roof", Size = Vector3.new(24, 1.2, 18), CFrame = at(0, 13.6, 2), Color = C.Dark })
+	for i = 0, 5 do
+		Builder.wedge(model, {
+			Name = "Awning",
+			Size = Vector3.new(4, 1.5, 4),
+			CFrame = at(-10 + i * 4, 12, -8.5) * CFrame.Angles(0, math.rad(180), 0),
+			Color = if i % 2 == 0 then C.White else C.Yellow,
 		})
 	end
-	Builder.part(model, {
-		Name = "ArchBeam",
-		Size = Vector3.new(GATE_HALF * 2 + 6, 2, 3),
-		CFrame = CFrame.new(0, 18, z),
-		Color = C.Yellow,
-		Material = Enum.Material.DiamondPlate,
-	})
-	Builder.sign(model, "JUNKYARD SIMULATOR", Vector3.new(0, 22, z + 0.2), Vector3.new(0, 0, 1), Vector2.new(30, 6), C.Rust, C.Yellow)
-	Builder.sign(model, "JUNKYARD SIMULATOR", Vector3.new(0, 22, z - 0.2), Vector3.new(0, 0, -1), Vector2.new(30, 6), C.Rust, C.Yellow)
+	Builder.part(model, { Name = "Counter", Size = Vector3.new(14, 3.4, 2.4), CFrame = at(0, 1.7, -4), Color = C.Wood })
+	Builder.sign(model, title, at(0, 17, -6).Position, base.LookVector, Vector2.new(20, 5), wall, C.Yellow)
 
-	-- Spawn pad outside the gate.
-	Builder.part(model, {
-		Name = "SpawnPad",
-		Size = Vector3.new(44, 0.4, 30),
-		CFrame = CFrame.new(0, 0.1, z + 18),
-		Color = C.Concrete,
-		Material = Enum.Material.Concrete,
+	local anchor = Builder.anchor(model, at(0, 3, -6.5).Position)
+	Builder.prompt(anchor, "ShopPrompt", "Open", title, 0, 13)
+	Builder.billboard(anchor, marker, C.Yellow, 18)
+	CollectionService:AddTag(model, tag)
+	return model, at
+end
+
+local function crateStand(parent: Instance, crate: Bots.Crate, base: CFrame)
+	local model = Builder.model(parent, "Crate_" .. crate.Id)
+	model:SetAttribute("CrateId", crate.Id)
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Pedestal", Size = Vector3.new(12, 2, 12), CFrame = at(0, 1, 0), Color = C.Dark })
+	Builder.part(model, { Name = "PedestalTop", Size = Vector3.new(11, 0.4, 11), CFrame = at(0, 2.2, 0), Color = crate.Color })
+	local box = Builder.part(model, { Name = "Crate", Size = Vector3.new(7, 7, 7), CFrame = at(0, 5.9, 0) * CFrame.Angles(0, math.rad(20), 0), Color = crate.Color })
+	box.Material = if crate.Id == "Galaxy" or crate.Id == "Gem" then Enum.Material.Neon else Enum.Material.SmoothPlastic
+	for _, y in { 3.2, 8.6 } do
+		Builder.part(model, { Name = "Band", Size = Vector3.new(7.2, 0.6, 7.2), CFrame = at(0, y, 0) * CFrame.Angles(0, math.rad(20), 0), Color = C.Dark })
+	end
+	Builder.part(model, { Name = "Lid", Size = Vector3.new(0.6, 7.2, 7.2), CFrame = at(0, 5.9, 0) * CFrame.Angles(0, math.rad(20), 0), Color = C.Dark })
+	local price = if crate.Currency == "Gems" then `{crate.Price} Gems` else Formulas.formatCash(crate.Price)
+	Builder.sign(model, `{crate.Name}\n{price}`, at(0, 13, 0).Position, base.LookVector, Vector2.new(11, 4.5), C.Dark, C.White)
+
+	local anchor = Builder.anchor(model, at(0, 4, -7).Position)
+	Builder.prompt(anchor, "OpenPrompt", `Open ({price})`, crate.Name, 0.4, 12)
+	CollectionService:AddTag(model, "CrateStand")
+end
+
+local function rebirthAltar(parent: Instance, base: CFrame)
+	local model = Builder.model(parent, "RebirthAltar")
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Step", Size = Vector3.new(20, 1, 20), CFrame = at(0, 0.5, 0), Color = rgb(90, 60, 130) })
+	Builder.part(model, { Name = "Step", Size = Vector3.new(14, 1, 14), CFrame = at(0, 1.5, 0), Color = rgb(120, 80, 170) })
+	Builder.part(model, { Name = "Crystal", Size = Vector3.new(4, 10, 4), CFrame = at(0, 8, 0) * CFrame.Angles(0, math.rad(45), 0), Color = C.Pink, Material = Enum.Material.Neon })
+	Builder.pyramid(model, "CrystalTip", at(0, 13, 0).Position, 5.5, 4, C.Pink, 45)
+	for _, x in { -6, 6 } do
+		Builder.part(model, { Name = "Pillar", Size = Vector3.new(2, 9, 2), CFrame = at(x, 6, 4), Color = rgb(200, 180, 230) })
+		Builder.part(model, { Name = "Orb", Size = Vector3.new(2.2, 2.2, 2.2), CFrame = at(x, 11.5, 4), Color = C.Purple, Material = Enum.Material.Neon })
+	end
+	Builder.sign(model, "REBIRTH", at(0, 17.5, 2).Position, base.LookVector, Vector2.new(14, 4), C.Purple, C.White)
+	local anchor = Builder.anchor(model, at(0, 4, -6).Position)
+	Builder.prompt(anchor, "OpenPrompt", "Rebirth", "Rebirth Altar", 0, 13)
+	Builder.billboard(anchor, "REBIRTH", C.Pink, 18)
+	CollectionService:AddTag(model, "RebirthAltar")
+end
+
+local function board(parent: Instance, name: string, tag: string, base: CFrame, title: string, color: Color3, withPrompt: string?)
+	local model = Builder.model(parent, name)
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	for _, x in { -8, 8 } do
+		Builder.part(model, { Name = "Leg", Size = Vector3.new(1.2, 16, 1.2), CFrame = at(x, 8, 0.6), Color = C.Dark })
+	end
+	local panel = Builder.part(model, { Name = "Board", Size = Vector3.new(18, 13, 0.8), CFrame = at(0, 10, 0), Color = color })
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 30
+	gui.LightInfluence = 0
+	gui.Parent = panel
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Name = "Title"
+	titleLabel.Size = UDim2.fromScale(1, 0.2)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Font = Enum.Font.FredokaOne
+	titleLabel.TextScaled = true
+	titleLabel.TextColor3 = C.Yellow
+	titleLabel.Text = title
+	titleLabel.Parent = gui
+	local list = Instance.new("TextLabel")
+	list.Name = "List"
+	list.Position = UDim2.fromScale(0.05, 0.22)
+	list.Size = UDim2.fromScale(0.9, 0.74)
+	list.BackgroundTransparency = 1
+	list.Font = Enum.Font.GothamBold
+	list.TextScaled = true
+	list.TextColor3 = C.White
+	list.TextXAlignment = Enum.TextXAlignment.Left
+	list.TextYAlignment = Enum.TextYAlignment.Top
+	list.Text = if withPrompt then "Daily quests, the quest chain\nand login rewards!" else "Loading..."
+	list.Parent = gui
+	if withPrompt then
+		local anchor = Builder.anchor(model, at(0, 3, -4).Position)
+		Builder.prompt(anchor, "OpenPrompt", withPrompt, title, 0, 13)
+	end
+	CollectionService:AddTag(model, tag)
+end
+
+local function codeTerminal(parent: Instance, base: CFrame)
+	local model = Builder.model(parent, "CodeTerminal")
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Body", Size = Vector3.new(6, 8, 4), CFrame = at(0, 4, 0), Color = C.Blue })
+	Builder.part(model, { Name = "Screen", Size = Vector3.new(4.6, 3.4, 0.2), CFrame = at(0, 5.8, -2.05), Color = rgb(120, 255, 180), Material = Enum.Material.Neon })
+	Builder.part(model, { Name = "Keys", Size = Vector3.new(5, 0.6, 2), CFrame = at(0, 3.2, -2.6) * CFrame.Angles(math.rad(-20), 0, 0), Color = C.Dark })
+	Builder.sign(model, "CODES", at(0, 10.5, 0).Position, base.LookVector, Vector2.new(7, 2.5), C.Dark, rgb(120, 255, 180))
+	local anchor = Builder.anchor(model, at(0, 3, -4).Position)
+	Builder.prompt(anchor, "OpenPrompt", "Enter Code", "Code Terminal", 0, 12)
+	CollectionService:AddTag(model, "CodeTerminal")
+end
+
+local function zoneSpawn(parent: Instance, zoneId: string, position: Vector3)
+	local part = Builder.part(parent, {
+		Name = "ZoneSpawn_" .. zoneId,
+		Size = Vector3.new(6, 1, 6),
+		CFrame = CFrame.lookAt(position, position - SOUTH),
+		Transparency = 1,
+		CanCollide = false,
 	})
+	part:SetAttribute("ZoneId", zoneId)
+	CollectionService:AddTag(part, "ZoneSpawn")
+end
+
+---------------------------------------------------------------- hub
+
+local function hub(map: Instance)
+	local folder = Builder.folder(map, "Hub")
+
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "SpawnLocation"
 	spawn.Anchored = true
-	spawn.Size = Vector3.new(12, 1, 12)
-	spawn.CFrame = CFrame.new(0, 0.5, z + 20) * CFrame.Angles(0, 0, 0)
+	spawn.Size = Vector3.new(14, 1, 14)
+	spawn.CFrame = CFrame.lookAt(Vector3.new(0, 0.5, 72), Vector3.new(0, 0.5, 0))
 	spawn.Color = C.Yellow
-	spawn.Material = Enum.Material.DiamondPlate
+	spawn.Material = Enum.Material.SmoothPlastic
 	spawn.Duration = 0
 	spawn.Neutral = true
 	spawn.TopSurface = Enum.SurfaceType.Smooth
-	spawn.Parent = model
+	spawn.Parent = folder
 	local decal = spawn:FindFirstChildOfClass("Decal")
 	if decal then
 		decal:Destroy()
 	end
+	spawn:SetAttribute("ZoneId", "Hub")
+	CollectionService:AddTag(spawn, "ZoneSpawn")
 
-	Builder.cylinder(model, "SignPost", Vector3.new(-14, 1.5, z + 8.3), 3, 0.6, C.DarkSteel, Enum.Material.Metal)
-	Builder.sign(model, "Collect scrap > Sell it > Buy upgrades!", Vector3.new(-14, 5, z + 8), Vector3.new(0, 0, 1), Vector2.new(14, 4), C.DarkSteel, C.White)
-end
+	Props.robotStatue(folder, facing(0, 18, SOUTH))
+	Builder.sign(folder, "JUNKYARD SIMULATOR", Vector3.new(0, 43, 18), SOUTH, Vector2.new(34, 6), C.Orange, C.White)
 
-local function lightPole(parent: Instance, position: Vector3)
-	local model = Builder.model(parent, "LightPole")
-	Builder.cylinder(model, "Pole", position + Vector3.new(0, 8, 0), 16, 0.8, C.DarkSteel, Enum.Material.Metal)
-	Builder.part(model, {
-		Name = "Arm",
-		Size = Vector3.new(0.5, 0.5, 4),
-		CFrame = CFrame.new(position + Vector3.new(0, 16, 1.5)),
-		Color = C.DarkSteel,
-		Material = Enum.Material.Metal,
-	})
-	local lamp = Builder.part(model, {
-		Name = "Lamp",
-		Size = Vector3.new(1.6, 0.6, 2.2),
-		CFrame = CFrame.new(position + Vector3.new(0, 15.6, 3)),
-		Color = Color3.fromRGB(255, 220, 160),
-		Material = Enum.Material.Neon,
-		CastShadow = false,
-	})
-	local light = Instance.new("SpotLight")
-	light.Face = Enum.NormalId.Bottom
-	light.Angle = 110
-	light.Range = 40
-	light.Brightness = 2
-	light.Color = Color3.fromRGB(255, 210, 150)
-	light.Parent = lamp
-end
-
-local function paths(parent: Instance)
-	local folder = Builder.folder(parent, "Paths")
-	local road, gravel = C.Road, Color3.fromRGB(105, 98, 90)
-	-- Main road: gate -> hub.
-	Builder.path(folder, Vector3.new(0, 0, MAP_HALF + 8), Vector3.new(0, 0, 95), 18, road, Enum.Material.Asphalt)
-	-- Hub -> Front Heap.
-	Builder.path(folder, Vector3.new(0, 0, 45), Vector3.new(0, 0, 18), 12, gravel, Enum.Material.Pebble)
-	-- Hub -> Car Graveyard and Back Lot.
-	Builder.path(folder, Vector3.new(-20, 0, 50), Vector3.new(-80, 0, -10), 10, gravel, Enum.Material.Pebble)
-	Builder.path(folder, Vector3.new(20, 0, 50), Vector3.new(78, 0, -62), 10, gravel, Enum.Material.Pebble)
-	-- Ring connection between the outer zones through the north.
-	Builder.path(folder, Vector3.new(-80, 0, -60), Vector3.new(60, 0, -110), 8, gravel, Enum.Material.Pebble, 0)
-
-	for _, z in { 160, 130, 100 } do
-		lightPole(folder, Vector3.new(-12, 0, z))
-		lightPole(folder, Vector3.new(12, 0, z))
-	end
-end
-
-local function hub(parent: Instance)
-	local model = Builder.model(parent, "HubPlaza")
-	Builder.part(model, {
-		Name = "Plaza",
-		Size = Vector3.new(120, 0.3, 54),
-		CFrame = CFrame.new(0, 0.1, 70),
-		Color = C.Concrete,
-		Material = Enum.Material.Concrete,
-	})
-	-- Painted guide lines on the plaza pointing to each station.
-	Builder.part(model, {
-		Name = "GuideLineWest",
-		Size = Vector3.new(30, 0.05, 1),
-		CFrame = CFrame.new(-22, 0.28, 70),
-		Color = C.Green,
-		Material = Enum.Material.Neon,
-		CastShadow = false,
-	})
-	Builder.part(model, {
-		Name = "GuideLineEast",
-		Size = Vector3.new(30, 0.05, 1),
-		CFrame = CFrame.new(22, 0.28, 70),
-		Color = C.Blue,
-		Material = Enum.Material.Neon,
-		CastShadow = false,
-	})
-	lightPole(model, Vector3.new(-30, 0, 92))
-	lightPole(model, Vector3.new(30, 0, 92))
-end
-
-local function sellStation(parent: Instance)
-	local model = Builder.model(parent, "SellStation")
-	local base = CFrame.new(-48, 0, 70) * CFrame.Angles(0, math.rad(-90), 0) -- faces +X (towards the plaza)
-	local function at(x: number, y: number, z: number): CFrame
-		return base * CFrame.new(x, y, z)
-	end
-
-	Builder.part(model, {
-		Name = "Scale",
-		Size = Vector3.new(18, 0.6, 12),
-		CFrame = at(0, 0.3, -6),
-		Color = C.Steel,
-		Material = Enum.Material.DiamondPlate,
-	})
-	-- Booth: back wall, side walls, roof, counter.
-	Builder.part(model, { Name = "BackWall", Size = Vector3.new(20, 12, 1), CFrame = at(0, 6, 6), Color = C.Green, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 12, 10), CFrame = at(-9.5, 6, 1.5), Color = C.Green, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 12, 10), CFrame = at(9.5, 6, 1.5), Color = C.Green, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "Roof", Size = Vector3.new(22, 1, 13), CFrame = at(0, 12.5, 0.5), Color = C.DarkSteel, Material = Enum.Material.CorrodedMetal })
-	Builder.part(model, { Name = "Counter", Size = Vector3.new(14, 3.5, 2.5), CFrame = at(0, 1.75, -2), Color = C.DarkSteel, Material = Enum.Material.DiamondPlate })
-	-- Coin bin on the counter.
-	Builder.cylinder(model, "CashBin", (at(4, 4.1, -2)).Position, 1.4, 2.2, C.Yellow, Enum.Material.Metal)
-
-	Builder.sign(model, "$ SELL SCRAP $", (at(0, 15.5, -0.2)).Position, base.LookVector, Vector2.new(18, 4.5), C.Green, C.White)
-
-	-- A hydraulic crusher next to the booth for flavour.
-	Builder.part(model, { Name = "CrusherBase", Size = Vector3.new(8, 4, 8), CFrame = at(-15, 2, 2), Color = C.Yellow, Material = Enum.Material.DiamondPlate })
-	Builder.part(model, { Name = "CrusherPress", Size = Vector3.new(7, 2, 7), CFrame = at(-15, 9, 2), Color = C.DarkSteel, Material = Enum.Material.Metal })
-	for _, x in { -18, -12 } do
-		Builder.part(model, { Name = "CrusherPillar", Size = Vector3.new(1, 10, 1), CFrame = at(x, 6, 5.5), Color = C.DarkSteel, Material = Enum.Material.Metal })
-	end
-	Builder.part(model, { Name = "CrushedCube", Size = Vector3.new(3, 2.5, 3), CFrame = at(-15, 5.25, 2) * CFrame.Angles(0, 0.3, 0), Color = C.Rust, Material = Enum.Material.CorrodedMetal })
-
-	local anchor = Builder.part(model, {
-		Name = "PromptAnchor",
-		Size = Vector3.new(2, 2, 2),
-		CFrame = at(0, 3, -3.5),
-		Transparency = 1,
-		CanCollide = false,
-	})
-	Builder.prompt(anchor, "SellPrompt", "Sell All Scrap", "Scrap Buyer", 0.3, 12)
-	Builder.billboard(anchor, "SELL", C.Green, 16)
-	CollectionService:AddTag(model, "SellStation")
-end
-
-local function upgradeShop(parent: Instance)
-	local model = Builder.model(parent, "UpgradeShop")
-	local base = CFrame.new(48, 0, 70) * CFrame.Angles(0, math.rad(90), 0) -- faces -X (towards the plaza)
-	local function at(x: number, y: number, z: number): CFrame
-		return base * CFrame.new(x, y, z)
-	end
-
-	Builder.part(model, { Name = "Floor", Size = Vector3.new(20, 0.6, 16), CFrame = at(0, 0.3, 2), Color = C.Concrete, Material = Enum.Material.Concrete })
-	Builder.part(model, { Name = "BackWall", Size = Vector3.new(20, 13, 1), CFrame = at(0, 6.5, 9.5), Color = C.Blue, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(-9.5, 6.5, 2), Color = C.Blue, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(9.5, 6.5, 2), Color = C.Blue, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "Roof", Size = Vector3.new(22, 1, 18), CFrame = at(0, 13.5, 2), Color = C.DarkSteel, Material = Enum.Material.Metal })
-	-- Striped awning over the front.
-	for i = 0, 5 do
-		Builder.part(model, {
-			Name = "Awning",
-			Size = Vector3.new(22 / 6, 0.4, 5),
-			CFrame = at(-11 + 22 / 12 + i * 22 / 6, 12, -8) * CFrame.Angles(math.rad(-20), 0, 0),
-			Color = if i % 2 == 0 then C.Yellow else C.White,
-			Material = Enum.Material.Fabric,
-		})
-	end
-	Builder.part(model, { Name = "Counter", Size = Vector3.new(14, 3.5, 2.5), CFrame = at(0, 1.75, -4), Color = C.DarkSteel, Material = Enum.Material.Wood })
-	-- Display rack of tools on the back wall.
-	for i, color in { Color3.fromRGB(140, 90, 60), C.Steel, Color3.fromRGB(200, 50, 50), C.Yellow, Color3.fromRGB(80, 220, 255) } do
-		Builder.part(model, {
+	shopBuilding(folder, "UpgradeShop", "UpgradeShop", facing(-72, 20, EAST), C.Blue, "UPGRADES", "UPGRADES")
+	local _, toolAt = shopBuilding(folder, "ToolShop", "ToolShop", facing(72, 20, WEST), C.Orange, "TOOL SHOP", "TOOLS")
+	-- Display rack of every tool in the tool shop.
+	local toolShop = folder:FindFirstChild("ToolShop") :: Model
+	for i = 1, 8 do
+		local color = Color3.fromHSV((i - 1) / 8, 0.7, 0.95)
+		Builder.part(toolShop, {
 			Name = "DisplayTool",
-			Size = Vector3.new(0.6, 5, 0.6),
-			CFrame = at(-6 + (i - 1) * 3, 6, 8.8) * CFrame.Angles(0, 0, math.rad(15)),
+			Size = Vector3.new(0.7, 5, 0.7),
+			CFrame = toolAt(-8 + (i - 1) * 2.3, 6.5, 8.6) * CFrame.Angles(0, 0, math.rad(12)),
 			Color = color,
-			Material = if i == 5 then Enum.Material.Neon else Enum.Material.Metal,
+			Material = if i >= 5 then Enum.Material.Neon else Enum.Material.SmoothPlastic,
 		})
 	end
-	Builder.sign(model, "UPGRADE SHOP", (at(0, 16.5, -6)).Position, base.LookVector, Vector2.new(18, 4.5), C.Blue, C.Yellow)
 
-	local anchor = Builder.part(model, {
-		Name = "PromptAnchor",
-		Size = Vector3.new(2, 2, 2),
-		CFrame = at(0, 3, -5.5),
-		Transparency = 1,
-		CanCollide = false,
-	})
-	Builder.prompt(anchor, "ShopPrompt", "Open Shop", "Upgrade Shop", 0, 12)
-	Builder.billboard(anchor, "UPGRADES", C.Yellow, 17)
-	CollectionService:AddTag(model, "UpgradeShop")
+	for i, crate in Bots.Crates do
+		crateStand(folder, crate, facing(-48 + (i - 1) * 32, -50, SOUTH))
+	end
+	Builder.sign(folder, "SCRAP BOT CRATES", Vector3.new(0, 20, -62), SOUTH, Vector2.new(30, 5), C.Purple, C.White)
+
+	rebirthAltar(folder, facing(-72, -62, EAST))
+	board(folder, "QuestBoard", "QuestBoard", facing(72, -62, WEST), "QUEST BOARD", rgb(150, 100, 60), "View Quests")
+	board(folder, "Leaderboard", "Leaderboard", facing(-62, 72, Vector3.new(1, 0, -0.4).Unit), "TOP EARNERS", C.Dark, nil)
+	codeTerminal(folder, facing(60, 74, Vector3.new(-1, 0, -0.4).Unit))
+
+	-- Planters, lamps and benches around the plaza.
+	for _, pos in { Vector3.new(-35, 0, 45), Vector3.new(35, 0, 45), Vector3.new(-35, 0, -20), Vector3.new(35, 0, -20) } do
+		Builder.box(folder, "Planter", Vector3.new(10, 2, 10), pos + Vector3.new(0, 1, 0), C.PlazaTrim)
+		Builder.tree(folder, pos + Vector3.new(0, 2, 0), 0.9, C.GrassDark, rng)
+	end
+	for _, pos in { Vector3.new(-14, 0, 90), Vector3.new(14, 0, 90), Vector3.new(-14, 0, -85), Vector3.new(14, 0, -85), Vector3.new(-50, 0, 0), Vector3.new(50, 0, 0) } do
+		Props.lamp(folder, CFrame.new(pos))
+	end
+	for _, pos in { Vector3.new(-22, 0, 58), Vector3.new(22, 0, 58) } do
+		Builder.box(folder, "BenchSeat", Vector3.new(8, 0.6, 2.5), pos + Vector3.new(0, 2, 0), C.Wood)
+		Builder.box(folder, "BenchBack", Vector3.new(8, 2, 0.6), pos + Vector3.new(0, 3.2, 1.1), C.Wood)
+		for _, x in { -3.2, 3.2 } do
+			Builder.box(folder, "BenchLeg", Vector3.new(0.6, 2, 2), pos + Vector3.new(x, 1, 0), C.Dark)
+		end
+	end
+	Builder.sign(folder, "Collect scrap  >  Sell it  >  Upgrade  >  Unlock new yards!", Vector3.new(0, 7, 92), Vector3.new(0, 0, -1), Vector2.new(26, 3.5), C.Dark, C.White)
+	Builder.box(folder, "SignPost", Vector3.new(1, 5, 1), Vector3.new(-9, 2.5, 92.4), C.Dark)
+	Builder.box(folder, "SignPost", Vector3.new(1, 5, 1), Vector3.new(9, 2.5, 92.4), C.Dark)
 end
 
--- A collectable pile: a dirt mound plus loose junk, with a prompt in the middle.
-local function scrapPile(parent: Instance, position: Vector3, zoneName: string, zoneLuck: number)
+---------------------------------------------------------------- piles
+
+local function scrapPile(parent: Instance, zone: Zones.Zone, position: Vector3)
 	local model = Builder.model(parent, "ScrapPile")
-	model:SetAttribute("ZoneName", zoneName)
-	model:SetAttribute("ZoneLuck", zoneLuck)
+	model:SetAttribute("ZoneId", zone.Id)
 
-	local mound = Builder.part(model, {
-		Name = "Mound",
-		Shape = Enum.PartType.Ball,
-		Size = Vector3.new(9, 9, 9),
-		CFrame = CFrame.new(position + Vector3.new(0, -3, 0)),
-		Color = Color3.fromRGB(95, 78, 60),
-		Material = Enum.Material.Ground,
-	})
-	mound:SetAttribute("Persistent", true)
+	local moundColor = zone.Theme.Ground:Lerp(Color3.new(0, 0, 0), 0.25)
+	for _, wedge in Builder.pyramid(model, "Mound", position, 9, 3.2, moundColor, rng:NextNumber(0, 90)) do
+		wedge:SetAttribute("Persistent", true)
+	end
 
-	for _ = 1, rng:NextInteger(5, 7) do
-		local offset = Vector3.new(rng:NextNumber(-2.5, 2.5), rng:NextNumber(1, 2.6), rng:NextNumber(-2.5, 2.5))
-		local rotation = CFrame.Angles(rng:NextNumber(-0.8, 0.8), rng:NextNumber(0, math.pi * 2), rng:NextNumber(-0.8, 0.8))
-		local color = JUNK_COLORS[rng:NextInteger(1, #JUNK_COLORS)]
+	local palette = zone.Theme.Pile
+	for i = 1, 5 do
+		local offset = Vector3.new(rng:NextNumber(-2.2, 2.2), 1.6 + rng:NextNumber(0, 1.6), rng:NextNumber(-2.2, 2.2))
+		local rotation = CFrame.Angles(rng:NextNumber(-0.7, 0.7), rng:NextNumber(0, math.pi * 2), rng:NextNumber(-0.7, 0.7))
+		local color = palette[(i - 1) % #palette + 1]
 		local kind = rng:NextInteger(1, 3)
+		local cf = CFrame.new(position + offset) * rotation
 		if kind == 1 then
-			Builder.part(model, {
-				Name = "Plate",
-				Size = Vector3.new(rng:NextNumber(1.5, 3), 0.3, rng:NextNumber(1.5, 3.5)),
-				CFrame = CFrame.new(position + offset) * rotation,
-				Color = color,
-				Material = Enum.Material.CorrodedMetal,
-				CanCollide = false,
-			})
+			Builder.part(model, { Name = "Junk", Size = Vector3.new(rng:NextNumber(1.5, 3), 0.5, rng:NextNumber(1.5, 3)), CFrame = cf, Color = color, CanCollide = false })
 		elseif kind == 2 then
-			Builder.part(model, {
-				Name = "Pipe",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(rng:NextNumber(2, 4), 0.6, 0.6),
-				CFrame = CFrame.new(position + offset) * rotation,
-				Color = color,
-				Material = Enum.Material.Metal,
-				CanCollide = false,
-			})
+			Builder.wedge(model, { Name = "Junk", Size = Vector3.new(rng:NextNumber(1, 2), rng:NextNumber(1, 2), rng:NextNumber(1.2, 2.4)), CFrame = cf, Color = color, CanCollide = false })
 		else
-			Builder.part(model, {
-				Name = "Chunk",
-				Size = Vector3.new(rng:NextNumber(0.8, 1.6), rng:NextNumber(0.8, 1.6), rng:NextNumber(0.8, 1.6)),
-				CFrame = CFrame.new(position + offset) * rotation,
-				Color = color,
-				Material = Enum.Material.DiamondPlate,
-				CanCollide = false,
-			})
+			Builder.part(model, { Name = "Junk", Size = Vector3.new(rng:NextNumber(0.9, 1.6), rng:NextNumber(0.9, 1.6), rng:NextNumber(0.9, 1.6)), CFrame = cf, Color = color, CanCollide = false })
 		end
 	end
 
-	local anchor = Builder.part(model, {
-		Name = "PromptAnchor",
-		Size = Vector3.new(1, 1, 1),
-		CFrame = CFrame.new(position + Vector3.new(0, 2.5, 0)),
-		Transparency = 1,
-		CanCollide = false,
-	})
+	local anchor = Builder.anchor(model, position + Vector3.new(0, 3, 0), 1)
 	model.PrimaryPart = anchor
-	Builder.prompt(anchor, "CollectPrompt", "Collect", zoneName, 0.5, 10)
+	Builder.prompt(anchor, "CollectPrompt", "Collect", zone.Name, 0.5, 10)
 
-	-- A faint sparkle so piles read as interactive from a distance.
 	local sparkle = Instance.new("ParticleEmitter")
 	sparkle.Name = "Glint"
 	sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
 	sparkle.Rate = 1.5
 	sparkle.Lifetime = NumberRange.new(0.8, 1.4)
 	sparkle.Speed = NumberRange.new(0.5, 1)
-	sparkle.Size = NumberSequence.new(0.6)
+	sparkle.Size = NumberSequence.new(0.7)
 	sparkle.LightEmission = 1
-	sparkle.Color = ColorSequence.new(Color3.fromRGB(255, 230, 150))
+	sparkle.Color = ColorSequence.new(rgb(255, 240, 170))
 	sparkle.SpreadAngle = Vector2.new(180, 180)
 	sparkle.Parent = anchor
 
 	CollectionService:AddTag(model, "ScrapPile")
 end
 
-local function rustyCar(parent: Instance, cframe: CFrame, missingWheel: boolean)
-	local model = Builder.model(parent, "RustyCar")
-	local color = CAR_COLORS[rng:NextInteger(1, #CAR_COLORS)]
-	local function at(x: number, y: number, z: number): CFrame
-		return cframe * CFrame.new(x, y, z)
+---------------------------------------------------------------- zone gates
+
+local function gate(parent: Instance, zone: Zones.Zone, z: number)
+	local model = Builder.model(parent, "Gate_" .. zone.Id)
+	model:SetAttribute("ZoneId", zone.Id)
+	local accent = zone.Theme.Accent
+	local opening = 15
+
+	for _, side in { -1, 1 } do
+		local inner = side * opening
+		local outer = side * HALF_WIDTH
+		Builder.box(model, "Wall", Vector3.new(math.abs(outer - inner), 14, 2), Vector3.new((inner + outer) / 2, 7, z), C.Fence)
+		Builder.box(model, "WallTrim", Vector3.new(math.abs(outer - inner), 1.2, 2.4), Vector3.new((inner + outer) / 2, 14, z), accent)
+		Builder.box(model, "Tower", Vector3.new(5, 22, 5), Vector3.new(side * (opening + 2.5), 11, z), accent)
+		Builder.pyramid(model, "TowerCap", Vector3.new(side * (opening + 2.5), 22, z), 6, 4, C.Dark)
 	end
-	Builder.part(model, { Name = "Body", Size = Vector3.new(6, 2.2, 12), CFrame = at(0, 1.9, 0), Color = color, Material = Enum.Material.CorrodedMetal })
-	Builder.part(model, { Name = "Cabin", Size = Vector3.new(5.4, 2, 5.5), CFrame = at(0, 4, 0.8), Color = color, Material = Enum.Material.CorrodedMetal })
-	Builder.part(model, { Name = "Windows", Size = Vector3.new(5.5, 1.3, 5.6), CFrame = at(0, 4.2, 0.8), Color = Color3.fromRGB(40, 50, 55), Material = Enum.Material.Glass, Transparency = 0.3 })
-	Builder.part(model, { Name = "Bumper", Size = Vector3.new(6.2, 0.6, 0.6), CFrame = at(0, 1.2, -6.1), Color = C.DarkSteel, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "RustPatch", Size = Vector3.new(6.05, 1, 3), CFrame = at(0, 2.2, -3), Color = C.Rust, Material = Enum.Material.CorrodedMetal })
-	for _, x in { -3, 3 } do
-		for _, z in { -3.8, 3.8 } do
-			if not (missingWheel and x == 3 and z == -3.8) then
-				Builder.part(model, {
-					Name = "Wheel",
-					Shape = Enum.PartType.Cylinder,
-					Size = Vector3.new(1, 2.4, 2.4),
-					CFrame = at(x, 1.2, z),
-					Color = C.Black,
-					Material = Enum.Material.SmoothPlastic,
-				})
+	Builder.box(model, "Arch", Vector3.new(opening * 2 + 10, 3, 3), Vector3.new(0, 21, z), C.Dark)
+	Builder.sign(model, string.upper(zone.Name), Vector3.new(0, 25.5, z + 0.5), SOUTH, Vector2.new(30, 5), accent, C.White)
+	Builder.sign(model, string.upper(zone.Name), Vector3.new(0, 25.5, z - 0.5), -SOUTH, Vector2.new(30, 5), accent, C.White)
+
+	if zone.Price > 0 then
+		local barrier = Builder.part(model, {
+			Name = "Barrier",
+			Size = Vector3.new(opening * 2, 19, 1),
+			CFrame = CFrame.new(0, 9.5, z),
+			Color = accent,
+			Material = Enum.Material.Neon,
+			Transparency = 0.45,
+		})
+		barrier.CastShadow = false
+		local requirement = Formulas.formatCash(zone.Price)
+		if zone.RebirthsRequired > 0 then
+			requirement ..= `  •  Rebirth {zone.RebirthsRequired}+`
+		end
+		Builder.sign(model, `LOCKED\n{requirement}`, Vector3.new(0, 9, z + 0.8), SOUTH, Vector2.new(18, 6), C.Dark, C.Yellow).Name = "PriceSign"
+		local anchor = Builder.anchor(model, Vector3.new(0, 3, z + 6))
+		Builder.prompt(anchor, "UnlockPrompt", `Unlock ({Formulas.formatCash(zone.Price)})`, zone.Name, 0.5, 14)
+		CollectionService:AddTag(model, "ZoneGate")
+	end
+end
+
+---------------------------------------------------------------- zone themes
+
+type ThemeFn = (folder: Instance, zone: Zones.Zone, z0: number) -> ()
+
+-- Positions measured from the zone's gate: (x, depth) -> world (x, z0 - depth).
+local function at(z0: number, x: number, depth: number, dir: Vector3?): CFrame
+	return facing(x, z0 - depth, dir or Vector3.new(0, 0, 1))
+end
+
+local function randomDir(): Vector3
+	local angle = rng:NextNumber(0, math.pi * 2)
+	return Vector3.new(math.cos(angle), 0, math.sin(angle))
+end
+
+local BRIGHT = { rgb(230, 70, 60), rgb(60, 130, 230), rgb(250, 200, 50), rgb(80, 190, 90), rgb(240, 240, 240), rgb(255, 140, 200), rgb(150, 90, 230) }
+local function bright(): Color3
+	return BRIGHT[rng:NextInteger(1, #BRIGHT)]
+end
+
+local THEMES: { [string]: ThemeFn } = {}
+
+THEMES.ScrapHeap = function(folder, _zone, z0)
+	for _, side in { -1, 1 } do
+		Builder.pyramid(folder, "ScrapMountain", Vector3.new(side * 84, 0, z0 - 110), 26, 16, rgb(190, 110, 60), rng:NextNumber(0, 90))
+		Builder.pyramid(folder, "ScrapMountain", Vector3.new(side * 80, 0, z0 - 125), 16, 10, rgb(170, 170, 180), rng:NextNumber(0, 90))
+		for _, depth in { 30, 75, 160 } do
+			for i = 1, 3 do
+				Props.barrel(folder, at(z0, side * 86 + rng:NextNumber(-3, 3), depth + i * 3.2, randomDir()), bright(), i == 3)
 			end
 		end
-	end
-end
-
-local function barrel(parent: Instance, position: Vector3, color: Color3, tipped: boolean)
-	if tipped then
-		Builder.part(parent, {
-			Name = "Barrel",
-			Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(3.6, 2.6, 2.6),
-			CFrame = CFrame.new(position + Vector3.new(0, 1.3, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi), 0),
-			Color = color,
-			Material = Enum.Material.CorrodedMetal,
-		})
-	else
-		Builder.cylinder(parent, "Barrel", position + Vector3.new(0, 1.8, 0), 3.6, 2.6, color, Enum.Material.CorrodedMetal)
-	end
-end
-
-local function tireStack(parent: Instance, position: Vector3, height: number)
-	for i = 0, height - 1 do
-		Builder.part(parent, {
-			Name = "Tire",
-			Shape = Enum.PartType.Cylinder,
-			Size = Vector3.new(1, 3.2, 3.2),
-			CFrame = CFrame.new(position + Vector3.new(rng:NextNumber(-0.2, 0.2), 0.5 + i, rng:NextNumber(-0.2, 0.2)))
-				* CFrame.Angles(0, 0, math.rad(90)),
-			Color = C.Black,
-			Material = Enum.Material.SmoothPlastic,
-		})
-	end
-end
-
-local function container(parent: Instance, cframe: CFrame, color: Color3)
-	local model = Builder.model(parent, "ShippingContainer")
-	Builder.part(model, { Name = "Box", Size = Vector3.new(8, 8.5, 20), CFrame = cframe * CFrame.new(0, 4.25, 0), Color = color, Material = Enum.Material.CorrodedMetal })
-	for _, x in { -4.05, 4.05 } do
-		for z = -8, 8, 4 do
-			Builder.part(model, { Name = "Rib", Size = Vector3.new(0.2, 8, 0.6), CFrame = cframe * CFrame.new(x, 4.25, z), Color = color:Lerp(Color3.new(0, 0, 0), 0.25), Material = Enum.Material.Metal })
+		for _, depth in { 70, 110, 150 } do
+			Props.tires(folder, at(z0, side * 45, depth), rng:NextInteger(1, 4))
 		end
 	end
-	Builder.part(model, { Name = "Doors", Size = Vector3.new(7.6, 8, 0.2), CFrame = cframe * CFrame.new(0, 4.25, 10.05), Color = color:Lerp(Color3.new(0, 0, 0), 0.15), Material = Enum.Material.Metal })
+	Props.container(folder, at(z0, 86, 185), rgb(60, 130, 230))
+	Props.crusher(folder, at(z0, -84, 185, EAST))
 end
 
-local function crane(parent: Instance, position: Vector3)
-	local model = Builder.model(parent, "Crane")
-	Builder.part(model, { Name = "Base", Size = Vector3.new(10, 3, 10), CFrame = CFrame.new(position + Vector3.new(0, 1.5, 0)), Color = C.Yellow, Material = Enum.Material.DiamondPlate })
-	Builder.part(model, { Name = "Mast", Size = Vector3.new(3, 34, 3), CFrame = CFrame.new(position + Vector3.new(0, 20, 0)), Color = C.Yellow, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "Cab", Size = Vector3.new(5, 4, 5), CFrame = CFrame.new(position + Vector3.new(0, 36, 2)), Color = C.Yellow, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "Jib", Size = Vector3.new(2, 2, 34), CFrame = CFrame.new(position + Vector3.new(0, 39, 12)), Color = C.Yellow, Material = Enum.Material.Metal })
-	Builder.part(model, { Name = "Counterweight", Size = Vector3.new(4, 4, 5), CFrame = CFrame.new(position + Vector3.new(0, 38, -5)), Color = C.DarkSteel, Material = Enum.Material.Concrete })
-	Builder.part(model, { Name = "Cable", Size = Vector3.new(0.2, 18, 0.2), CFrame = CFrame.new(position + Vector3.new(0, 29, 26)), Color = C.Black, Material = Enum.Material.Metal, CanCollide = false })
-	Builder.cylinder(model, "Magnet", position + Vector3.new(0, 19.5, 26), 1.2, 6, C.DarkSteel, Enum.Material.Metal)
-	-- A car dangling from the magnet.
-	rustyCar(model, CFrame.new(position + Vector3.new(0, 14.5, 26)) * CFrame.Angles(math.rad(8), math.rad(30), math.rad(5)), true)
-end
-
-local function zoneSign(parent: Instance, text: string, position: Vector3, facing: Vector3, color: Color3)
-	Builder.cylinder(parent, "SignPost", position + Vector3.new(0, 3, 0), 6, 0.6, C.DarkSteel, Enum.Material.Metal)
-	Builder.sign(parent, text, position + Vector3.new(0, 7, 0), facing, Vector2.new(13, 3.5), color, C.White)
-end
-
-local function frontHeap(parent: Instance)
-	local folder = Builder.folder(parent, "Zone_FrontHeap")
-	local center = Vector3.new(0, 0, 0)
-	for i = 1, 6 do
-		local angle = (i / 6) * math.pi * 2 + 0.3
-		scrapPile(folder, center + Vector3.new(math.cos(angle) * 18, 0, math.sin(angle) * 18), "Front Heap", 1)
-	end
-	-- A big central junk heap that is just scenery.
-	Builder.part(folder, {
-		Name = "BigHeap",
-		Shape = Enum.PartType.Ball,
-		Size = Vector3.new(14, 14, 14),
-		CFrame = CFrame.new(center + Vector3.new(0, -3, 0)),
-		Color = Color3.fromRGB(90, 72, 55),
-		Material = Enum.Material.Ground,
-	})
-	barrel(folder, center + Vector3.new(2, 3.5, 1), C.Blue, true)
-	tireStack(folder, center + Vector3.new(-2, 3.5, -1), 2)
-	zoneSign(folder, "FRONT HEAP", Vector3.new(9, 0, 30), Vector3.new(0, 0, 1), C.DarkRust)
-end
-
-local function carGraveyard(parent: Instance)
-	local folder = Builder.folder(parent, "Zone_CarGraveyard")
-	local center = Vector3.new(-100, 0, -40)
-	local pilePositions = {
-		Vector3.new(-14, 0, 18),
-		Vector3.new(14, 0, 14),
-		Vector3.new(-22, 0, -8),
-		Vector3.new(20, 0, -14),
-		Vector3.new(-4, 0, -26),
-		Vector3.new(4, 0, 2),
-	}
-	for _, offset in pilePositions do
-		scrapPile(folder, center + offset, "Car Graveyard", 1.15)
-	end
-	local carSpots = {
-		{ Vector3.new(-32, 0, 28), 20, false },
-		{ Vector3.new(-36, 0, 0), 95, true },
-		{ Vector3.new(30, 0, 30), -35, false },
-		{ Vector3.new(34, 0, -34), 60, true },
-		{ Vector3.new(-26, 0, -38), 150, false },
-		{ Vector3.new(12, 0, -40), -10, false },
-	}
-	for _, spot in carSpots do
-		local offset, yaw, missing = spot[1] :: Vector3, spot[2] :: number, spot[3] :: boolean
-		rustyCar(folder, CFrame.new(center + offset) * CFrame.Angles(0, math.rad(yaw), math.rad(if missing then 4 else 0)), missing)
-	end
-	-- Stacked wreck.
-	rustyCar(folder, CFrame.new(center + Vector3.new(-36, 5.1, 0)) * CFrame.Angles(0, math.rad(80), math.rad(-3)), false)
-	tireStack(folder, center + Vector3.new(0, 0, 32), 4)
-	tireStack(folder, center + Vector3.new(4, 0, 34), 3)
-	tireStack(folder, center + Vector3.new(26, 0, 4), 2)
-	zoneSign(folder, "CAR GRAVEYARD", Vector3.new(-72, 0, -2), Vector3.new(1, 0, 0.6), C.DarkRust)
-end
-
-local function backLot(parent: Instance)
-	local folder = Builder.folder(parent, "Zone_BackLot")
-	local center = Vector3.new(100, 0, -100)
-	local pilePositions = {
-		Vector3.new(-18, 0, 14),
-		Vector3.new(10, 0, 22),
-		Vector3.new(-20, 0, -14),
-		Vector3.new(4, 0, -4),
-		Vector3.new(24, 0, -2),
-		Vector3.new(-6, 0, -28),
-	}
-	for _, offset in pilePositions do
-		scrapPile(folder, center + offset, "Back Lot", 1.35)
-	end
-	crane(folder, center + Vector3.new(40, 0, -30))
-	local containerColors = { Color3.fromRGB(180, 60, 50), Color3.fromRGB(40, 100, 160), Color3.fromRGB(60, 130, 80), Color3.fromRGB(200, 140, 40) }
-	container(folder, CFrame.new(center + Vector3.new(52, 0, 30)), containerColors[1])
-	container(folder, CFrame.new(center + Vector3.new(52, 0, 52)), containerColors[2])
-	container(folder, CFrame.new(center + Vector3.new(52, 8.5, 40)), containerColors[3])
-	container(folder, CFrame.new(center + Vector3.new(-30, 0, -50)) * CFrame.Angles(0, math.rad(90), 0), containerColors[4])
-	zoneSign(folder, "BACK LOT  (rare finds!)", Vector3.new(72, 0, -56), Vector3.new(-0.6, 0, 1), Color3.fromRGB(110, 60, 170))
-end
-
-local function decorations(parent: Instance)
-	local folder = Builder.folder(parent, "Decorations")
-	-- Containers lining the west fence.
-	local colors = { Color3.fromRGB(180, 60, 50), Color3.fromRGB(40, 100, 160), Color3.fromRGB(60, 130, 80) }
-	for i, z in { 120, 90, -100, -130 } do
-		container(folder, CFrame.new(-MAP_HALF + 6, 0, z), colors[(i - 1) % #colors + 1])
-	end
-	-- Barrel clusters.
-	local barrelColors = { C.Blue, Color3.fromRGB(190, 50, 40), C.Yellow, Color3.fromRGB(60, 120, 60) }
-	local clusters = {
-		Vector3.new(-62, 0, 92),
-		Vector3.new(62, 0, 92),
-		Vector3.new(-30, 0, 140),
-		Vector3.new(140, 0, 40),
-		Vector3.new(-140, 0, 40),
-		Vector3.new(30, 0, -60),
-	}
-	for _, center in clusters do
-		for _ = 1, rng:NextInteger(3, 5) do
-			local offset = Vector3.new(rng:NextNumber(-4, 4), 0, rng:NextNumber(-4, 4))
-			barrel(folder, center + offset, barrelColors[rng:NextInteger(1, #barrelColors)], rng:NextNumber() < 0.25)
+THEMES.CarGraveyard = function(folder, _zone, z0)
+	for _, side in { -1, 1 } do
+		for _, depth in { 25, 55, 85, 150, 180 } do
+			Props.car(folder, at(z0, side * 87, depth, randomDir()), bright(), rng:NextNumber() < 0.5)
+		end
+		for _, depth in { 70, 110, 150 } do
+			Props.cone(folder, at(z0, side * 14, depth))
 		end
 	end
-	-- Loose tires, placed by hand so they never block the road, plaza or piles.
-	local tires = {
-		Vector3.new(-28, 0, 120),
-		Vector3.new(30, 0, 150),
-		Vector3.new(-60, 0, 30),
-		Vector3.new(55, 0, 20),
-		Vector3.new(-120, 0, 80),
-		Vector3.new(120, 0, 90),
-		Vector3.new(-30, 0, -100),
-		Vector3.new(0, 0, -140),
-		Vector3.new(150, 0, -20),
-		Vector3.new(-150, 0, -10),
-		Vector3.new(80, 0, 150),
-		Vector3.new(-90, 0, 150),
-	}
-	for i, pos in tires do
-		if i % 2 == 0 then
-			tireStack(folder, pos, rng:NextInteger(1, 3))
-		else
-			Builder.part(folder, {
-				Name = "Tire",
-				Shape = Enum.PartType.Cylinder,
-				Size = Vector3.new(1, 3.2, 3.2),
-				CFrame = CFrame.new(pos + Vector3.new(0, 1.5, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi), math.rad(10)),
-				Color = C.Black,
-				Material = Enum.Material.SmoothPlastic,
-			})
+	-- Car stacks and a crusher as landmarks.
+	for level = 0, 2 do
+		Props.car(folder, at(z0, -84, 118, Vector3.new(0.2 * level, 0, 1)) * CFrame.new(0, level * 3.2, 0), bright(), level == 0)
+	end
+	Props.crusher(folder, at(z0, 84, 118, WEST))
+	Props.tires(folder, at(z0, 45, 70), 5)
+	Props.tires(folder, at(z0, -45, 150), 4)
+end
+
+THEMES.ApplianceAlley = function(folder, _zone, z0)
+	local pastel = { rgb(245, 245, 245), rgb(255, 180, 200), rgb(150, 225, 215), rgb(250, 225, 130), rgb(180, 200, 255) }
+	for _, side in { -1, 1 } do
+		for _, depth in { 25, 50, 150, 175 } do
+			local kind = rng:NextInteger(1, 3)
+			local cf = at(z0, side * 86, depth, -Vector3.new(side, 0, 0))
+			local color = pastel[rng:NextInteger(1, #pastel)]
+			if kind == 1 then
+				Props.fridge(folder, cf, color)
+			elseif kind == 2 then
+				Props.washer(folder, cf, color)
+			else
+				Props.tv(folder, cf, color, 1)
+			end
+		end
+		for _, depth in { 70, 150 } do
+			Props.washer(folder, at(z0, side * 45, depth, randomDir()), pastel[rng:NextInteger(1, #pastel)])
 		end
 	end
-	-- Extra parked wrecks near the entrance road.
-	rustyCar(folder, CFrame.new(-40, 0, 140) * CFrame.Angles(0, math.rad(75), 0), false)
-	rustyCar(folder, CFrame.new(44, 0, 130) * CFrame.Angles(0, math.rad(-100), 0), true)
-	-- Scrap mountains in the corners for silhouette.
-	for _, pos in { Vector3.new(-140, 0, -145), Vector3.new(145, 0, 140), Vector3.new(-145, 0, 150) } do
+	Props.toaster(folder, at(z0, 80, 110, WEST), 1.6)
+	Props.tv(folder, at(z0, -80, 110, EAST), rgb(255, 140, 170), 2.6)
+end
+
+THEMES.ElectronicsDump = function(folder, _zone, z0)
+	local glows = { rgb(70, 255, 150), rgb(70, 200, 255), rgb(255, 90, 200) }
+	for _, side in { -1, 1 } do
+		for _, depth in { 25, 45, 160, 180 } do
+			Props.serverRack(folder, at(z0, side * 88, depth, -Vector3.new(side, 0, 0)), glows[rng:NextInteger(1, #glows)])
+		end
+		for _, depth in { 70, 150 } do
+			Props.chip(folder, at(z0, side * 45, depth), 4)
+		end
+		-- Glowing circuit traces along the road.
+		Builder.box(folder, "Trace", Vector3.new(0.6, 0.1, ZONE_LENGTH - 10), Vector3.new(side * 13, 0.12, z0 - ZONE_LENGTH / 2), rgb(70, 255, 150), nil, Enum.Material.Neon).CastShadow = false
+	end
+	Props.monitor(folder, at(z0, -82, 110, EAST), 1.1, rgb(70, 200, 255))
+	Props.chip(folder, at(z0, 82, 110), 12)
+	for i = 1, 4 do
 		Builder.part(folder, {
-			Name = "ScrapMountain",
-			Shape = Enum.PartType.Ball,
-			Size = Vector3.new(40, 40, 40),
-			CFrame = CFrame.new(pos + Vector3.new(0, -8, 0)),
-			Color = Color3.fromRGB(85, 70, 58),
-			Material = Enum.Material.Ground,
+			Name = "CableCoil",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(1.2, 5, 5),
+			CFrame = at(z0, 82 + rng:NextNumber(-6, 6), 135 + i * 5) * CFrame.new(0, 0.6, 0) * CFrame.Angles(0, 0, math.rad(90)),
+			Color = glows[(i - 1) % #glows + 1]:Lerp(Color3.new(0, 0, 0), 0.4),
 		})
 	end
 end
+
+THEMES.Shipyard = function(folder, _zone, z0)
+	-- A strip of sea along the east fence with docks and wrecks.
+	Builder.box(folder, "Water", Vector3.new(26, 0.4, ZONE_LENGTH - 4), Vector3.new(86, 0.1, z0 - ZONE_LENGTH / 2), rgb(70, 160, 230)).Transparency = 0.1
+	for _, depth in { 40, 140 } do
+		Props.dock(folder, at(z0, 78, depth, WEST) * CFrame.Angles(0, math.rad(90), 0), 22)
+	end
+	Props.boatHull(folder, at(z0, 88, 90, SOUTH), rgb(200, 70, 60))
+	Props.boatHull(folder, at(z0, 88, 175, SOUTH) * CFrame.Angles(0, math.rad(10), 0), rgb(60, 110, 170))
+	Props.lighthouse(folder, at(z0, -82, 110))
+	for _, depth in { 30, 160 } do
+		Props.anchor(folder, at(z0, -86, depth, EAST), 0.8)
+		Props.container(folder, at(z0, -86, depth + 18), bright())
+	end
+	for _, depth in { 70, 150 } do
+		Props.barrel(folder, at(z0, -45, depth, randomDir()), rgb(60, 110, 170), true)
+		Props.barrel(folder, at(z0, 45, depth, randomDir()), rgb(200, 70, 60), false)
+	end
+end
+
+THEMES.CrashSite = function(folder, _zone, z0)
+	local glows = { rgb(190, 90, 255), rgb(60, 230, 210), rgb(255, 110, 200) }
+	Props.ufo(folder, at(z0, 80, 110), 1)
+	-- Crater ring around the UFO.
+	for i = 0, 9 do
+		local angle = i * math.pi / 5
+		Builder.rock(folder, Vector3.new(80 + math.cos(angle) * 17, 0, z0 - 110 + math.sin(angle) * 17), rng:NextNumber(3, 5), rgb(110, 90, 140), rng)
+	end
+	Props.rocket(folder, at(z0, -82, 110, SOUTH))
+	for _, side in { -1, 1 } do
+		for _, depth in { 25, 55, 165, 185 } do
+			Props.crystal(folder, at(z0, side * 88, depth), glows[rng:NextInteger(1, #glows)], rng:NextNumber(4, 8))
+		end
+		Props.satellite(folder, at(z0, side * 45, 70))
+		Props.crystal(folder, at(z0, side * 45, 150), glows[rng:NextInteger(1, #glows)], 5)
+	end
+end
+
+local function zoneLot(map: Instance, zone: Zones.Zone)
+	local folder = Builder.folder(map, "Zone_" .. zone.Id)
+	local z0 = gateZ(zone.Order)
+
+	gate(folder, zone, z0)
+	zoneSpawn(folder, zone.Id, Vector3.new(0, 0.5, z0 - 14))
+	sellStation(folder, at(z0, -38, 28, EAST), zone.Theme.Accent)
+
+	for _, depth in { 50, 90, 130, 170 } do
+		for _, x in { -62, -28, 28, 62 } do
+			local pos = Vector3.new(x + rng:NextNumber(-5, 5), 0, z0 - depth + rng:NextNumber(-5, 5))
+			scrapPile(folder, zone, pos)
+		end
+	end
+
+	local theme = THEMES[zone.Id]
+	if theme then
+		theme(folder, zone, z0)
+	end
+	for _, depth in { 60, 140 } do
+		Props.lamp(folder, at(z0, -13, depth), zone.Theme.Accent)
+		Props.lamp(folder, at(z0, 13, depth + 40), zone.Theme.Accent)
+	end
+end
+
+---------------------------------------------------------------- outside
+
+local function scenery(map: Instance)
+	local folder = Builder.folder(map, "Scenery")
+	for z = HUB_SOUTH + 40, END_Z - 40, -38 do
+		for _, side in { -1, 1 } do
+			local x = side * (HALF_WIDTH + rng:NextNumber(18, 60))
+			Builder.tree(folder, Vector3.new(x, 0, z + rng:NextNumber(-10, 10)), rng:NextNumber(1, 1.6), if rng:NextNumber() < 0.5 then C.GrassDark else rgb(80, 160, 75), rng)
+		end
+	end
+	for z = HUB_SOUTH + 60, END_Z - 60, -170 do
+		for _, side in { -1, 1 } do
+			local x = side * rng:NextNumber(230, 300)
+			Builder.pyramid(folder, "Mountain", Vector3.new(x, 0, z), rng:NextNumber(90, 140), rng:NextNumber(60, 110), rgb(130, 140, 160), rng:NextNumber(0, 90))
+		end
+	end
+end
+
+---------------------------------------------------------------- lighting
 
 function MapBuilder.setupLighting()
-	Lighting.ClockTime = 16.2
-	Lighting.GeographicLatitude = 35
-	Lighting.Brightness = 2.6
-	Lighting.Ambient = Color3.fromRGB(70, 60, 55)
-	Lighting.OutdoorAmbient = Color3.fromRGB(140, 125, 110)
-	Lighting.EnvironmentDiffuseScale = 0.5
-	Lighting.EnvironmentSpecularScale = 0.5
+	Lighting.ClockTime = 14.5
+	Lighting.GeographicLatitude = 30
+	Lighting.Brightness = 3
+	Lighting.Ambient = rgb(110, 105, 120)
+	Lighting.OutdoorAmbient = rgb(150, 150, 165)
+	Lighting.EnvironmentDiffuseScale = 0.4
+	Lighting.EnvironmentSpecularScale = 0.2
 	Lighting.GlobalShadows = true
 
 	local function ensure(className: string, name: string): Instance
@@ -699,30 +652,31 @@ function MapBuilder.setupLighting()
 	end
 
 	local sky = ensure("Sky", "Sky") :: Sky
-	sky.SunAngularSize = 14
-	sky.MoonAngularSize = 8
+	sky.SunAngularSize = 16
+	sky.MoonAngularSize = 9
 
 	local atmosphere = ensure("Atmosphere", "Atmosphere") :: Atmosphere
-	atmosphere.Density = 0.32
-	atmosphere.Offset = 0.15
-	atmosphere.Color = Color3.fromRGB(230, 200, 170)
-	atmosphere.Decay = Color3.fromRGB(150, 110, 90)
-	atmosphere.Glare = 0.4
-	atmosphere.Haze = 1.2
+	atmosphere.Density = 0.22
+	atmosphere.Offset = 0.1
+	atmosphere.Color = rgb(210, 225, 245)
+	atmosphere.Decay = rgb(140, 160, 200)
+	atmosphere.Glare = 0.2
+	atmosphere.Haze = 0.6
 
 	local bloom = ensure("BloomEffect", "Bloom") :: BloomEffect
-	bloom.Intensity = 0.6
-	bloom.Size = 24
-	bloom.Threshold = 1.6
+	bloom.Intensity = 0.5
+	bloom.Size = 20
+	bloom.Threshold = 1.3
 
 	local color = ensure("ColorCorrectionEffect", "ColorCorrection") :: ColorCorrectionEffect
-	color.Saturation = 0.15
-	color.Contrast = 0.08
-	color.TintColor = Color3.fromRGB(255, 245, 235)
+	color.Saturation = 0.22
+	color.Contrast = 0.06
+	color.Brightness = 0.02
+	color.TintColor = rgb(255, 252, 245)
 
 	local rays = ensure("SunRaysEffect", "SunRays") :: SunRaysEffect
-	rays.Intensity = 0.06
-	rays.Spread = 0.6
+	rays.Intensity = 0.04
+	rays.Spread = 0.5
 end
 
 function MapBuilder.build(): Model
@@ -733,18 +687,13 @@ function MapBuilder.build(): Model
 
 	local map = Instance.new("Model")
 	map.Name = "Junkyard"
-
 	ground(map)
-	perimeterFence(map)
-	entrance(map)
-	paths(map)
+	fences(map)
 	hub(map)
-	sellStation(map)
-	upgradeShop(map)
-	frontHeap(map)
-	carGraveyard(map)
-	backLot(map)
-	decorations(map)
+	for _, zone in Zones.List do
+		zoneLot(map, zone)
+	end
+	scenery(map)
 
 	map.Parent = Workspace
 	MapBuilder.setupLighting()

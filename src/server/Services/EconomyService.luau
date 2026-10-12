@@ -1,139 +1,247 @@
 --!strict
--- Selling and upgrade purchases. The client only ever sends an upgrade id; prices,
--- cash, inventory and effects are all looked up and changed here.
+-- Selling, upgrades, tools, zone unlocks, teleports, boosts and settings.
+-- The client only ever names *what* it wants; prices, balances, distances and
+-- effects are all looked up and checked here.
 
 local CollectionService = game:GetService("CollectionService")
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Config = require(ReplicatedStorage.Shared.Config)
-local Formulas = require(ReplicatedStorage.Shared.Formulas)
-local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
+local Formulas = require(Shared.Formulas)
+local Remotes = require(Shared.Remotes)
+local Tools = require(Shared.Tools)
+local Zones = require(Shared.Zones)
 local DataService = require(script.Parent.DataService)
+local RequestRouter = require(script.Parent.RequestRouter)
+local Stations = require(script.Parent.Stations)
 local ToolService = require(script.Parent.ToolService)
 
 local EconomyService = {}
 
-local lastPurchase: { [Player]: number } = {}
+---------------------------------------------------------------- selling
 
-local function distanceTo(player: Player, part: BasePart): number
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or not root:IsA("BasePart") then
-		return math.huge
-	end
-	return (root.Position - part.Position).Magnitude
-end
-
-local function nearTagged(player: Player, tag: string, range: number): boolean
-	for _, station in CollectionService:GetTagged(tag) do
-		local anchor = station:FindFirstChild("PromptAnchor")
-		if anchor and anchor:IsA("BasePart") and distanceTo(player, anchor) <= range then
-			return true
-		end
-	end
-	return false
-end
-
-local function sell(player: Player)
+-- Sells the whole backpack. Returns the cash earned (0 if nothing sold).
+function EconomyService.sellAll(player: Player): number
 	local profile = DataService.get(player)
 	if not profile then
-		return
+		return 0
 	end
-	if not nearTagged(player, "SellStation", Config.Gameplay.SellRange) then
-		return
-	end
-
-	local total = 0
-	local count = 0
-	local breakdown = {}
-	for _, scrap in Config.ScrapTypes do
-		local amount = profile.Inventory[scrap.Id] or 0
-		if amount > 0 then
-			local earned = amount * scrap.Value
-			total += earned
-			count += amount
-			table.insert(breakdown, { Id = scrap.Id, Count = amount, Earned = earned })
-		end
-		profile.Inventory[scrap.Id] = 0
-	end
-
+	local raw = Formulas.inventoryValue(profile.Inventory)
+	local count = DataService.getUsedSlots(profile)
 	if count == 0 then
-		Remotes.event("Notify"):FireClient(player, "Nothing to sell! Collect scrap from the piles first.", "error")
-		return
+		DataService.notify(player, "Nothing to sell! Collect scrap from the piles first.", "error")
+		return 0
 	end
 
-	profile.Cash += total
-	profile.TotalEarned += total
-	Remotes.event("Sold"):FireClient(player, total, count, breakdown)
+	local breakdown = {}
+	for _, id in Zones.ItemOrder do
+		local amount = profile.Inventory[id]
+		if amount and amount > 0 then
+			table.insert(breakdown, { Id = id, Count = amount })
+		end
+	end
+	local multiplier = Formulas.getCashMultiplier(profile, DataService.context(player))
+	local total = math.floor(raw * multiplier)
+
+	table.clear(profile.Inventory)
+	DataService.addCash(profile, total)
+	DataService.addStat(profile, "SoldCash", total)
+	DataService.addStat(profile, "SellCount", 1)
+	Remotes.event("Sold"):FireClient(player, total, count, breakdown, multiplier)
 	DataService.changed(player)
+	return total
 end
 
-local function purchase(player: Player, upgradeId: unknown): (boolean, string)
-	local now = os.clock()
-	if lastPurchase[player] and now - lastPurchase[player] < Config.Gameplay.PurchaseThrottle then
-		return false, "Slow down!"
+local function sellAtStation(player: Player)
+	if Stations.near(player, "SellStation") then
+		EconomyService.sellAll(player)
 	end
-	lastPurchase[player] = now
+end
 
+local function remoteSell(player: Player): (boolean, string?)
+	local profile = DataService.get(player) :: DataService.Profile
+	if (profile.Perks.RemoteSell or 0) <= 0 then
+		return false, "Unlock Remote Sell in the Rebirth shop first."
+	end
+	local earned = EconomyService.sellAll(player)
+	return earned > 0, nil
+end
+
+---------------------------------------------------------------- upgrades & tools
+
+local function buyUpgrade(player: Player, upgradeId: unknown): (boolean, string?)
 	if type(upgradeId) ~= "string" then
 		return false, "Invalid upgrade."
 	end
 	local upgrade = Formulas.getUpgrade(upgradeId)
-	local profile = DataService.get(player)
-	if not upgrade or not profile then
+	if not upgrade then
 		return false, "Invalid upgrade."
 	end
-	if not nearTagged(player, "UpgradeShop", Config.Gameplay.ShopRange) then
+	if not Stations.near(player, "UpgradeShop") then
 		return false, "Walk back to the Upgrade Shop to buy."
 	end
-
-	local level = profile.Levels[upgrade.Id]
-	local price = Formulas.getUpgradePrice(upgrade.Id, level)
+	local profile = DataService.get(player) :: DataService.Profile
+	local lvl = profile.Levels[upgrade.Id]
+	local price = Formulas.upgradePrice(upgrade.Id, lvl)
 	if not price then
 		return false, `{upgrade.Name} is already maxed out!`
 	end
 	if profile.Cash < price then
 		return false, `You need {Formulas.formatCash(price - profile.Cash)} more.`
 	end
-
 	profile.Cash -= price
-	profile.Levels[upgrade.Id] = level + 1
-
-	if upgrade.Id == "BetterTools" then
-		ToolService.refresh(player)
-	end
+	profile.Levels[upgrade.Id] = lvl + 1
+	DataService.addStat(profile, "Upgrades", 1)
 	DataService.changed(player)
-	return true, `{upgrade.Name} upgraded to level {level + 1}!`
+	return true, `{upgrade.Name} upgraded to level {lvl + 1}!`
 end
 
-local function connectPrompt(tag: string, promptName: string, handler: (Player) -> ())
-	local function register(station: Instance)
-		local anchor = station:FindFirstChild("PromptAnchor")
-		local prompt = anchor and anchor:FindFirstChild(promptName)
-		if prompt and prompt:IsA("ProximityPrompt") then
-			prompt.Triggered:Connect(handler)
-		else
-			warn(`[EconomyService] {tag} missing PromptAnchor/{promptName}:`, station:GetFullName())
+local function buyTool(player: Player): (boolean, string?)
+	if not Stations.near(player, "ToolShop") then
+		return false, "Walk back to the Tool Shop to buy."
+	end
+	local profile = DataService.get(player) :: DataService.Profile
+	local nextTool = Tools[profile.ToolTier + 1]
+	if not nextTool then
+		return false, "You already own the best tool!"
+	end
+	if profile.Cash < nextTool.Price then
+		return false, `You need {Formulas.formatCash(nextTool.Price - profile.Cash)} more.`
+	end
+	profile.Cash -= nextTool.Price
+	profile.ToolTier += 1
+	ToolService.refresh(player)
+	DataService.changed(player)
+	return true, `You got the {nextTool.Name}!`
+end
+
+---------------------------------------------------------------- zones
+
+function EconomyService.unlockZone(player: Player, zoneId: unknown): (boolean, string?)
+	if type(zoneId) ~= "string" then
+		return false, "Invalid zone."
+	end
+	local zone = Zones.ById[zoneId]
+	local profile = DataService.get(player)
+	if not zone or not profile then
+		return false, "Invalid zone."
+	end
+	if profile.Zones[zone.Id] then
+		return false, `{zone.Name} is already unlocked.`
+	end
+	if not Stations.near(player, "ZoneGate", nil, "ZoneId", zone.Id) then
+		return false, "Walk up to the gate to unlock it."
+	end
+	local previous = Zones.previous(zone.Id)
+	if previous and not profile.Zones[previous.Id] then
+		return false, `Unlock {previous.Name} first.`
+	end
+	if profile.Rebirths < zone.RebirthsRequired then
+		return false, `{zone.Name} needs Rebirth {zone.RebirthsRequired}.`
+	end
+	if profile.Cash < zone.Price then
+		return false, `You need {Formulas.formatCash(zone.Price - profile.Cash)} more.`
+	end
+	profile.Cash -= zone.Price
+	profile.Zones[zone.Id] = true
+	DataService.changed(player)
+	return true, `{zone.Name} unlocked!`
+end
+
+local function onGatePrompt(player: Player, gate: Instance)
+	local zoneId = gate:GetAttribute("ZoneId")
+	local ok, message = EconomyService.unlockZone(player, zoneId)
+	if message then
+		DataService.notify(player, message, if ok then "success" else "error")
+	end
+end
+
+function EconomyService.zonesUnlocked(profile: DataService.Profile): number
+	local count = 0
+	for _ in profile.Zones do
+		count += 1
+	end
+	return count
+end
+
+local function teleport(player: Player, target: unknown): (boolean, string?)
+	if type(target) ~= "string" then
+		return false, "Invalid destination."
+	end
+	local profile = DataService.get(player) :: DataService.Profile
+	if target ~= "Hub" and not profile.Zones[target] then
+		return false, "You haven't unlocked that zone yet."
+	end
+	local character = player.Character
+	if not character then
+		return false, "Respawning..."
+	end
+	for _, spawnPart in CollectionService:GetTagged("ZoneSpawn") do
+		if spawnPart:GetAttribute("ZoneId") == target and spawnPart:IsA("BasePart") then
+			character:PivotTo(spawnPart.CFrame + Vector3.new(0, 4, 0))
+			return true, nil
 		end
 	end
-	for _, station in CollectionService:GetTagged(tag) do
-		register(station)
+	return false, "That spot is missing."
+end
+
+---------------------------------------------------------------- boosts & settings
+
+local function buyBoost(player: Player, boostId: unknown): (boolean, string?)
+	local boost = nil
+	for _, candidate in Config.Boosts do
+		if candidate.Id == boostId then
+			boost = candidate
+		end
 	end
-	CollectionService:GetInstanceAddedSignal(tag):Connect(register)
+	if not boost then
+		return false, "Invalid boost."
+	end
+	local profile = DataService.get(player) :: DataService.Profile
+	if profile.Gems < boost.Gems then
+		return false, `You need {boost.Gems - profile.Gems} more gems.`
+	end
+	profile.Gems -= boost.Gems
+	-- Buying again while active stacks the time.
+	local now = os.time()
+	profile.Boosts[boost.Id] = math.max(profile.Boosts[boost.Id] or 0, now) + boost.Duration
+	DataService.changed(player)
+	return true, `{boost.Name} active!`
+end
+
+local function setSetting(player: Player, key: unknown, value: unknown): (boolean, string?)
+	if type(key) ~= "string" or type(value) ~= "boolean" or not table.find(DataService.SETTINGS, key) then
+		return false, "Invalid setting."
+	end
+	local profile = DataService.get(player) :: DataService.Profile
+	profile.Settings[key] = value
+	DataService.changed(player)
+	return true, nil
+end
+
+---------------------------------------------------------------- wiring
+
+local function openPanel(panel: string)
+	return function(player: Player)
+		Remotes.event("OpenPanel"):FireClient(player, panel)
+	end
 end
 
 function EconomyService.start()
-	connectPrompt("SellStation", "SellPrompt", sell)
-	connectPrompt("UpgradeShop", "ShopPrompt", function(player)
-		Remotes.event("OpenShop"):FireClient(player)
-	end)
+	Stations.connectPrompt("SellStation", "SellPrompt", sellAtStation)
+	Stations.connectPrompt("UpgradeShop", "ShopPrompt", openPanel("Upgrades"))
+	Stations.connectPrompt("ToolShop", "ShopPrompt", openPanel("Tools"))
+	Stations.connectPrompt("ZoneGate", "UnlockPrompt", onGatePrompt)
+	Stations.connectPrompt("CodeTerminal", "OpenPrompt", openPanel("Codes"))
 
-	Remotes.func("PurchaseUpgrade").OnServerInvoke = purchase
-
-	Players.PlayerRemoving:Connect(function(player)
-		lastPurchase[player] = nil
-	end)
+	RequestRouter.register("Sell", remoteSell)
+	RequestRouter.register("BuyUpgrade", buyUpgrade)
+	RequestRouter.register("BuyTool", buyTool)
+	RequestRouter.register("UnlockZone", EconomyService.unlockZone)
+	RequestRouter.register("Teleport", teleport)
+	RequestRouter.register("BuyBoost", buyBoost)
+	RequestRouter.register("SetSetting", setSetting)
 end
 
 return EconomyService

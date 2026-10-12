@@ -49,6 +49,14 @@ task = {
 os.clock = function()
 	return now
 end
+local realTime = os.time
+M.timeOffset = 1760000000
+os.time = function(t)
+	if t then
+		return realTime(t)
+	end
+	return M.timeOffset + math.floor(now)
+end
 
 function M.advance(dt)
 	local target = now + dt
@@ -73,6 +81,26 @@ function M.now()
 end
 
 ---------------------------------------------------------------- datatypes
+-- Seeded Random like Roblox's (LCG; fine for tests).
+do
+	local R = {}
+	R.__index = R
+	local seedCounter = 0
+	function R:NextNumber(a, b)
+		self.state = (self.state * 1103515245 + 12345) % 2147483648
+		local t = self.state / 2147483648
+		return (a or 0) + t * ((b or 1) - (a or 0))
+	end
+	function R:NextInteger(a, b)
+		return math.min(b, a + math.floor(self:NextNumber() * (b - a + 1)))
+	end
+	Random = {
+		new = function(seed)
+			seedCounter += 1
+			return setmetatable({ state = math.floor(seed or (seedCounter * 7777 + 13)) % 2147483648 }, R)
+		end,
+	}
+end
 local Vector3Meta = {}
 Vector3 = {}
 local function v3(x, y, z)
@@ -174,6 +202,16 @@ Color3 = {
 		return setmetatable({ R = r or 0, G = g or 0, B = b or 0, __type = "Color3" }, Color3Meta)
 	end,
 }
+Color3.fromHSV = function(h, sat, v)
+	local i = math.floor(h * 6)
+	local f = h * 6 - i
+	local p, q, t = v * (1 - sat), v * (1 - f * sat), v * (1 - (1 - f) * sat)
+	local m = i % 6
+	if m == 0 then return Color3.new(v, t, p) elseif m == 1 then return Color3.new(q, v, p)
+	elseif m == 2 then return Color3.new(p, v, t) elseif m == 3 then return Color3.new(p, q, v)
+	elseif m == 4 then return Color3.new(t, p, v) end
+	return Color3.new(v, p, q)
+end
 Color3.fromRGB = function(r, g, b)
 	assert(type(r) == "number" and type(g) == "number" and type(b) == "number", "fromRGB needs numbers")
 	return Color3.new(r / 255, g / 255, b / 255)
@@ -254,6 +292,11 @@ CFrame.lookAt = function(pos, target, up)
 end
 CFrameMeta.__index = function(self, k)
 	local r = rawget(self, "r")
+	if k == "Lerp" then
+		return function(a, b, t)
+			return cf(a.p:Lerp(b.p, t), b.r)
+		end
+	end
 	if k == "Position" then
 		return rawget(self, "p")
 	elseif k == "LookVector" then
@@ -357,6 +400,12 @@ local SUPER = {
 	Frame = "GuiObject",
 	TextLabel = "GuiObject",
 	TextButton = "GuiObject",
+	TextBox = "GuiObject",
+	ImageLabel = "GuiObject",
+	ScrollingFrame = "GuiObject",
+	ViewportFrame = "GuiObject",
+	StringValue = "ValueBase",
+	PointLight = "Light",
 	GuiObject = "GuiBase2d",
 	ScreenGui = "LayerCollector",
 	SurfaceGui = "LayerCollector",
@@ -381,7 +430,7 @@ local BASEPART = {
 }
 local GUIOBJ = {
 	"Size", "Position", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency", "Visible", "LayoutOrder",
-	"ZIndex", "AutomaticSize", "ClipsDescendants", "Rotation", "BorderSizePixel",
+	"ZIndex", "AutomaticSize", "ClipsDescendants", "Rotation", "BorderSizePixel", "Active", "Selectable", "Name",
 }
 local TEXT = {
 	"Text", "TextColor3", "TextScaled", "Font", "TextSize", "TextWrapped", "TextXAlignment", "TextYAlignment",
@@ -418,10 +467,21 @@ local PROPS = {
 	ProximityPrompt = merge({ "ActionText", "ObjectText", "HoldDuration", "MaxActivationDistance", "RequiresLineOfSight", "KeyboardKeyCode", "Enabled", "Style", "UIOffset" }),
 	ParticleEmitter = merge({ "Texture", "Rate", "Lifetime", "Speed", "Size", "LightEmission", "Color", "SpreadAngle", "Acceleration", "EmissionDirection", "Transparency", "Enabled" }),
 	SpotLight = merge({ "Face", "Angle", "Range", "Brightness", "Color", "Shadows", "Enabled" }),
+	PointLight = merge({ "Range", "Brightness", "Color", "Shadows", "Enabled" }),
+	StringValue = merge({ "Value" }),
+	ScrollingFrame = merge(GUIOBJ, { "CanvasSize", "AutomaticCanvasSize", "ScrollBarThickness", "ScrollingDirection", "ScrollBarImageColor3", "ElasticBehavior" }),
+	TextBox = merge(GUIOBJ, TEXT, { "PlaceholderText", "ClearTextOnFocus", "PlaceholderColor3" }),
+	ImageLabel = merge(GUIOBJ, { "Image", "ImageColor3", "ImageTransparency", "ScaleType" }),
+	UIGridLayout = merge({ "CellSize", "CellPadding", "SortOrder", "FillDirection", "HorizontalAlignment", "VerticalAlignment", "FillDirectionMaxCells" }),
+	UIGradient = merge({ "Color", "Rotation", "Transparency", "Offset" }),
+	UIAspectRatioConstraint = merge({ "AspectRatio", "DominantAxis" }),
+	ViewportFrame = merge(GUIOBJ, { "CurrentCamera", "Ambient", "LightColor", "LightDirection" }),
+	Camera = merge({ "CFrame", "FieldOfView" }),
 	Sky = merge({ "SunAngularSize", "MoonAngularSize", "StarCount", "CelestialBodiesShown" }),
 	Atmosphere = merge({ "Density", "Offset", "Color", "Decay", "Glare", "Haze" }),
 	BloomEffect = merge({ "Intensity", "Size", "Threshold", "Enabled" }),
 	ColorCorrectionEffect = merge({ "Saturation", "Contrast", "TintColor", "Brightness", "Enabled" }),
+	Highlight = merge({ "FillColor", "OutlineColor", "FillTransparency", "OutlineTransparency", "Adornee", "DepthMode", "Enabled" }),
 	SunRaysEffect = merge({ "Intensity", "Spread", "Enabled" }),
 	Tool = merge({ "ToolTip", "CanBeDropped", "RequiresHandle", "Grip", "Enabled", "ManualActivationOnly", "TextureId" }),
 	WeldConstraint = merge({ "Part0", "Part1", "Enabled" }),
@@ -439,7 +499,7 @@ local PROPS = {
 	LocalScript = merge({}),
 	Lighting = merge({ "ClockTime", "GeographicLatitude", "Brightness", "Ambient", "OutdoorAmbient", "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "GlobalShadows", "Technology" }),
 	Players = merge({ "CharacterAutoLoads", "RespawnTime", "LocalPlayer" }),
-	Player = merge({ "UserId", "Character" }),
+	Player = merge({ "UserId", "Character", "DisplayName" }),
 	Workspace = merge({}),
 }
 
@@ -677,6 +737,16 @@ function Methods.Destroy(self)
 end
 function Methods.SetAttribute(self, k, v)
 	data(self).attributes[k] = v
+	local sigs = data(self).attrSignals
+	if sigs and sigs[k] then
+		sigs[k]:Fire(v)
+	end
+end
+function Methods.GetAttributeChangedSignal(self, k)
+	local d = data(self)
+	d.attrSignals = d.attrSignals or {}
+	d.attrSignals[k] = d.attrSignals[k] or Signal.new()
+	return d.attrSignals[k]
 end
 function Methods.GetAttribute(self, k)
 	return data(self).attributes[k]
@@ -717,6 +787,7 @@ function Methods.FireClient(self, player, ...)
 	end
 end
 function Methods.FireAllClients(self, ...)
+	M.remoteLog[#M.remoteLog + 1] = { name = data(self).Name, player = nil, args = table.pack(...) }
 	self.OnClientEvent:Fire(...)
 end
 function Methods.FireServer(self, ...)
@@ -754,6 +825,29 @@ function Methods.LoadCharacter(self)
 	bp.Name = "Backpack"
 	bp.Parent = self
 	self.CharacterAdded:Fire(char)
+end
+function Methods.PivotTo(self, cframe)
+	local root = Methods.FindFirstChild(self, "HumanoidRootPart")
+	if root then
+		root.CFrame = cframe
+	elseif data(self).props.PrimaryPart then
+		data(self).props.PrimaryPart.CFrame = cframe
+	end
+end
+function Methods.GetPivot(self)
+	local root = Methods.FindFirstChild(self, "HumanoidRootPart") or data(self).props.PrimaryPart
+	return root and root.CFrame or CFrame.new()
+end
+function Methods.GetPlayerByUserId(self, userId)
+	for _, c in data(self).children do
+		if data(c).ClassName == "Player" and data(c).props.UserId == userId then
+			return c
+		end
+	end
+	return nil
+end
+function Methods.GetNameFromUserIdAsync(self, userId)
+	return "User" .. tostring(userId)
 end
 function Methods.Kick(self, msg)
 	print("KICK " .. tostring(msg))
@@ -911,7 +1005,24 @@ function DataStoreService:GetDataStore(name)
 	end
 	return store
 end
+function DataStoreService:GetOrderedDataStore(name)
+	if M.orderedFails ~= false then
+		error("OrderedDataStore unavailable in mock")
+	end
+end
 services.DataStoreService = DataStoreService
+
+M.ownedPasses = {}
+local MarketplaceService = {
+	PromptGamePassPurchaseFinished = Signal.new(),
+	PromptProductPurchaseFinished = Signal.new(),
+}
+function MarketplaceService:UserOwnsGamePassAsync(userId, passId)
+	return M.ownedPasses[passId] == true
+end
+function MarketplaceService:PromptGamePassPurchase() end
+function MarketplaceService:PromptProductPurchase() end
+services.MarketplaceService = MarketplaceService
 
 M.context = "server"
 local RunService = {
@@ -969,6 +1080,7 @@ workspace = services.Workspace
 function M.addPlayer(name, userId)
 	local p = newInstance("Player")
 	p.Name = name
+	data(p).props.DisplayName = name
 	data(p).props.UserId = userId
 	local gui = newInstance("PlayerGui")
 	gui.Name = "PlayerGui"

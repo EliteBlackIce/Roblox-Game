@@ -11,12 +11,14 @@ local EVENTS = {
 	"Notify", -- server -> client: toast message
 	"Collected", -- server -> client: collection effect data
 	"Sold", -- server -> client: sale summary
-	"OpenShop", -- server -> client: player used the shop prompt
+	"OpenPanel", -- server -> client: player used a station prompt (shop, tools, rebirth...)
+	"Hatched", -- server -> client: crate opening result
+	"Announce", -- server -> all clients: big server-wide banner
 }
 
 local FUNCTIONS = {
 	"GetState", -- client -> server: initial snapshot
-	"PurchaseUpgrade", -- client -> server: upgrade id only, everything else is server-side
+	"Request", -- client -> server: (action, ...) routed and validated by RequestRouter
 }
 
 local folder: Folder

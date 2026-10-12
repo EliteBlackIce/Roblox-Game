@@ -1,125 +1,88 @@
 --!strict
--- Central tuning for Junkyard Simulator. Every number the economy uses lives here,
--- and the server is the only side that acts on it.
+-- Core gameplay tuning for Junkyard Simulator. Content catalogs (items, zones,
+-- tools, bots, quests) live in their own modules next to this one.
 
 local Config = {}
 
 Config.Gameplay = {
 	StartingCash = 0,
 	BaseCapacity = 10,
-	BaseCooldown = 1.6, -- seconds between collections at upgrade level 0
-	MinCooldown = 0.5, -- collection speed can never go below this
+	BaseCooldown = 1.6, -- seconds between collections at Speed level 0
+	MinCooldown = 0.45, -- collection speed can never go below this
+	BaseWalkSpeed = 16,
 	CollectRange = 14, -- max studs between character and pile, checked on the server
-	SellRange = 16,
-	ShopRange = 18,
+	StationRange = 18, -- sell stations, shops, crates, gates
 	CooldownTolerance = 0.1, -- latency allowance on the server-side cooldown check
-	PurchaseThrottle = 0.25, -- min seconds between purchase requests per player
+	RequestThrottle = 0.15, -- min seconds between UI requests per player
 	AutosaveInterval = 120,
+	AutoCollectInterval = 0.25,
+	GemChanceOnEpic = 1, -- gems granted per Epic+ find
 }
 
 Config.ScrapPiles = {
 	MinCharges = 3, -- collections a pile gives before it is used up
 	MaxCharges = 6,
-	RespawnTime = 20, -- seconds before a depleted pile comes back
+	RespawnTime = 18, -- seconds before a depleted pile comes back
 }
 
--- Rarity tier feeds the luck formula: higher tiers benefit more from luck.
-export type ScrapType = {
+Config.Events = {
+	GoldenPileInterval = { 120, 210 }, -- seconds between golden piles (random in range)
+	GoldenPileDuration = 75,
+	GoldenLuck = 8, -- luck multiplier on a golden pile
+	GoldenMythicChance = 0.03, -- chance per item to roll the zone's Mythic on a golden pile
+	GoldenGems = 3,
+	FrenzyInterval = 720, -- seconds between Scrap Frenzy events
+	FrenzyDuration = 90,
+	FrenzyCashMultiplier = 2,
+	FrenzyCooldownMultiplier = 0.6,
+}
+
+export type Rarity = {
 	Id: string,
 	Name: string,
-	Value: number,
-	Weight: number,
-	Tier: number,
+	Tier: number, -- 0 = Common ... 5 = Mythic
 	Color: Color3,
+	Announce: boolean, -- server-wide shoutout when found
 }
 
-Config.ScrapTypes = {
-	{
-		Id = "CommonMetal",
-		Name = "Common Metal",
-		Value = 5,
-		Weight = 60,
-		Tier = 0,
-		Color = Color3.fromRGB(176, 184, 192),
-	},
-	{
-		Id = "CopperWire",
-		Name = "Copper Wire",
-		Value = 15,
-		Weight = 25,
-		Tier = 1,
-		Color = Color3.fromRGB(230, 128, 60),
-	},
-	{
-		Id = "ElectronicParts",
-		Name = "Electronic Parts",
-		Value = 40,
-		Weight = 12,
-		Tier = 2,
-		Color = Color3.fromRGB(70, 200, 120),
-	},
-	{
-		Id = "RareMechanical",
-		Name = "Rare Mechanical Parts",
-		Value = 150,
-		Weight = 3,
-		Tier = 3,
-		Color = Color3.fromRGB(170, 100, 255),
-	},
-} :: { ScrapType }
+Config.Rarities = {
+	{ Id = "Common", Name = "Common", Tier = 0, Color = Color3.fromRGB(200, 200, 205), Announce = false },
+	{ Id = "Uncommon", Name = "Uncommon", Tier = 1, Color = Color3.fromRGB(95, 215, 95), Announce = false },
+	{ Id = "Rare", Name = "Rare", Tier = 2, Color = Color3.fromRGB(70, 160, 255), Announce = false },
+	{ Id = "Epic", Name = "Epic", Tier = 3, Color = Color3.fromRGB(185, 95, 255), Announce = false },
+	{ Id = "Legendary", Name = "Legendary", Tier = 4, Color = Color3.fromRGB(255, 175, 40), Announce = true },
+	{ Id = "Mythic", Name = "Mythic", Tier = 5, Color = Color3.fromRGB(255, 70, 130), Announce = true },
+} :: { Rarity }
 
--- Tools are unlocked in order by the "BetterTools" upgrade (level 0 = first tool).
-export type ToolDef = {
-	Name: string,
-	Yield: number, -- items granted per collection (still capped by free space)
-	Luck: number, -- multiplies the odds of rarer scrap
-	Color: Color3,
-	Material: Enum.Material,
-}
+Config.RarityById = {} :: { [string]: Rarity }
+for _, rarity in Config.Rarities do
+	Config.RarityById[rarity.Id] = rarity
+end
 
-Config.Tools = {
-	{ Name = "Rusty Grabber", Yield = 1, Luck = 1.0, Color = Color3.fromRGB(140, 90, 60), Material = Enum.Material.CorrodedMetal },
-	{ Name = "Steel Grabber", Yield = 1, Luck = 1.4, Color = Color3.fromRGB(170, 175, 185), Material = Enum.Material.Metal },
-	{ Name = "Magnet Claw", Yield = 2, Luck = 1.8, Color = Color3.fromRGB(200, 50, 50), Material = Enum.Material.SmoothPlastic },
-	{ Name = "Hydraulic Claw", Yield = 2, Luck = 2.4, Color = Color3.fromRGB(255, 190, 40), Material = Enum.Material.DiamondPlate },
-	{ Name = "Plasma Extractor", Yield = 3, Luck = 3.2, Color = Color3.fromRGB(80, 220, 255), Material = Enum.Material.Neon },
-} :: { ToolDef }
+-- Gem-bought timed boosts.
+export type Boost = { Id: string, Name: string, Description: string, Gems: number, Duration: number }
+Config.Boosts = {
+	{ Id = "Cash", Name = "x2 Cash", Description = "Double sell value", Gems = 40, Duration = 600 },
+	{ Id = "Luck", Name = "x2 Luck", Description = "Double luck on every grab", Gems = 40, Duration = 600 },
+	{ Id = "Speed", Name = "Turbo Grab", Description = "Grab 40% faster", Gems = 30, Duration = 600 },
+} :: { Boost }
 
-export type UpgradeDef = {
-	Id: string,
-	Name: string,
-	Description: string,
-	MaxLevel: number,
-	-- Price to go from `level` to `level + 1`.
-	Prices: { number },
-}
+-- Monetization. Paste your own IDs from the Creator Dashboard; anything left at 0
+-- stays switched off and never appears in the store.
+export type GamePass = { Key: string, Id: number, Name: string, Description: string }
+Config.GamePasses = {
+	{ Key = "DoubleCash", Id = 0, Name = "x2 Cash", Description = "Permanently doubles sell value." },
+	{ Key = "BigBackpack", Id = 0, Name = "Mega Backpack", Description = "+50% backpack space." },
+	{ Key = "ExtraBots", Id = 0, Name = "+2 Bot Slots", Description = "Equip two more Scrap Bots." },
+	{ Key = "VIP", Id = 0, Name = "VIP", Description = "x1.25 cash, x1.25 luck and a gold name tag." },
+} :: { GamePass }
 
-Config.Upgrades = {
-	{
-		Id = "Capacity",
-		Name = "Bigger Backpack",
-		Description = "Carry more scrap before you have to sell.",
-		MaxLevel = 10,
-		Prices = { 40, 90, 175, 300, 500, 800, 1250, 1900, 2800, 4000 },
-	},
-	{
-		Id = "Speed",
-		Name = "Collection Speed",
-		Description = "Less waiting between grabs.",
-		MaxLevel = 10,
-		Prices = { 60, 120, 220, 380, 600, 900, 1350, 2000, 2900, 4200 },
-	},
-	{
-		Id = "BetterTools",
-		Name = "Better Tools",
-		Description = "Grab more scrap per pull and find rarer parts.",
-		MaxLevel = #Config.Tools - 1,
-		Prices = { 250, 900, 2600, 7500 },
-	},
-} :: { UpgradeDef }
-
-Config.CapacityPerLevel = 5
-Config.CooldownPerLevel = 0.11
+export type Product = { Key: string, Id: number, Name: string, Gems: number }
+Config.Products = {
+	{ Key = "GemsSmall", Id = 0, Name = "100 Gems", Gems = 100 },
+	{ Key = "GemsMedium", Id = 0, Name = "550 Gems", Gems = 550 },
+	{ Key = "GemsLarge", Id = 0, Name = "1,200 Gems", Gems = 1200 },
+} :: { Product }
 
 -- Built-in Studio content sounds, so nothing depends on external audio uploads.
 Config.Sounds = {
@@ -128,6 +91,8 @@ Config.Sounds = {
 	Purchase = "rbxasset://sounds/electronicpingshort.wav",
 	Error = "rbxasset://sounds/clickfast.wav",
 	Click = "rbxasset://sounds/button.wav",
+	Rare = "rbxasset://sounds/electronicpingshort.wav",
+	Hatch = "rbxasset://sounds/swoosh.wav",
 }
 
 return Config

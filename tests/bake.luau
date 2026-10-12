@@ -7,25 +7,6 @@ local ROOT = __ARGS[2] .. "/src"
 local M = (__loadsrc(__readfile(DIR .. "/mock.luau"), "mock"))()
 local S = M.services
 
--- Deterministic Random (Roblox's Random is seeded; emulate with an LCG).
-do
-	local R = {}
-	R.__index = R
-	function R:NextNumber(a, b)
-		self.state = (self.state * 1103515245 + 12345) % 2147483648
-		local t = self.state / 2147483648
-		return (a or 0) + t * ((b or 1) - (a or 0))
-	end
-	function R:NextInteger(a, b)
-		return math.min(b, a + math.floor(self:NextNumber() * (b - a + 1)))
-	end
-	Random = {
-		new = function(seed)
-			return setmetatable({ state = seed or 1 }, R)
-		end,
-	}
-end
-
 local listing = __ARGS[3]
 local function filesUnder(prefix)
 	local out = {}

@@ -1,4 +1,4 @@
 {
   "className": "BloomEffect",
-  "properties": {"Intensity": 0.6, "Size": 24, "Threshold": 1.6}
+  "properties": {"Intensity": 0.5, "Size": 20, "Threshold": 1.3}
 }

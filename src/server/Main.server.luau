@@ -1,22 +1,34 @@
 --!strict
--- Server entry point: build the world, then start every service in dependency order.
+-- Server entry point: build the world (if it isn't baked into the place), then
+-- start every service. Services register their hooks before profiles load.
 
 local Players = game:GetService("Players")
 
+local Services = script.Parent.Services
 local MapBuilder = require(script.Parent.World.MapBuilder)
-local DataService = require(script.Parent.Services.DataService)
-local ToolService = require(script.Parent.Services.ToolService)
-local ScrapService = require(script.Parent.Services.ScrapService)
-local EconomyService = require(script.Parent.Services.EconomyService)
+local DataService = require(Services.DataService)
 
--- Characters spawn only after the map exists, so nobody falls through the void.
+-- Characters spawn only after data loads, so the tool and stats are ready.
 Players.CharacterAutoLoads = false
 
 MapBuilder.build()
 
-ToolService.start() -- registers its onLoaded hook before any profile loads
-ScrapService.start()
-EconomyService.start()
+for _, name in {
+	"RequestRouter",
+	"ToolService",
+	"CharacterService",
+	"ScrapService",
+	"EconomyService",
+	"BotService",
+	"RebirthService",
+	"QuestService",
+	"EventService",
+	"CodeService",
+	"LeaderboardService",
+	"MonetizationService",
+} do
+	require(Services:FindFirstChild(name) :: ModuleScript).start()
+end
 DataService.start()
 
 local function spawnPlayer(player: Player)
@@ -32,6 +44,4 @@ local function spawnPlayer(player: Player)
 	player:LoadCharacter()
 end
 
-DataService.onLoaded(function(player)
-	spawnPlayer(player)
-end)
+DataService.onLoaded(spawnPlayer)

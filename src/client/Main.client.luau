@@ -1,6 +1,7 @@
 --!strict
--- Client entry point: builds the UI, listens for server updates and plays effects.
--- The client never decides anything about money or items; it only renders state.
+-- Client entry point: builds the UI, mirrors server state and plays effects.
+-- The client never decides anything about money or items; it only renders state
+-- and sends requests that the server validates.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8,10 +9,16 @@ local Workspace = game:GetService("Workspace")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local BotFollowers = require(script.Parent.BotFollowers)
 local Effects = require(script.Parent.Effects)
+local Gates = require(script.Parent.Gates)
+local State = require(script.Parent.State)
+local Hatch = require(script.Parent.UI.Hatch)
 local Hud = require(script.Parent.UI.Hud)
+local Menu = require(script.Parent.UI.Menu)
 local Notifications = require(script.Parent.UI.Notifications)
-local Shop = require(script.Parent.UI.Shop)
+local Windows = require(script.Parent.UI.Windows)
+local Screens = script.Parent.UI.Screens
 
 local player = Players.LocalPlayer
 
@@ -22,12 +29,26 @@ screen.IgnoreGuiInset = false
 screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screen.Parent = player:WaitForChild("PlayerGui")
 
-local hud = Hud.new(screen)
 Notifications.init(screen)
-Shop.init(screen)
+Windows.init(screen)
+Hud.init(screen, function()
+	State.request("Sell")
+end)
+Hatch.init(screen)
 
--- Collect prompts hold for as long as the player's cooldown, so the Collection
--- Speed upgrade is felt directly. The server enforces the real cooldown.
+for _, name in { "Upgrades", "Tools", "Bots", "Quests", "Index", "Rebirth", "Boosts", "Teleport", "Codes", "Settings" } do
+	(require(Screens:FindFirstChild(name) :: ModuleScript) :: () -> ())()
+end
+local Store = require(Screens.Store)
+if Store.hasItems() then
+	Store.init()
+end
+Menu.init(screen, Store.hasItems())
+Gates.init()
+BotFollowers.init()
+
+-- Collect prompts hold for as long as the player's cooldown, so the speed
+-- upgrades are felt directly. The server enforces the real cooldown.
 local holdDuration = Config.Gameplay.BaseCooldown
 
 local function applyHold(prompt: Instance)
@@ -43,46 +64,60 @@ local function applyHoldToAll()
 end
 Workspace.DescendantAdded:Connect(applyHold)
 
-local lastState: any = nil
-
-local function onState(state: any)
-	if not state then
-		return
-	end
-	lastState = state
-	hud:update(state)
-	Shop.setState(state)
+local greeted = false
+State.listen(function(state)
+	Hud.update(state)
+	Effects.muted = state.Settings.Sfx == false
+	Effects.lowFx = state.Settings.LowFx == true
 	if state.Cooldown ~= holdDuration then
 		holdDuration = state.Cooldown
 		applyHoldToAll()
 	end
-end
+	-- Show the login reward the first time we see it's claimable.
+	if not greeted then
+		greeted = true
+		if state.Login and state.Login.CanClaim then
+			task.delay(1.5, function()
+				Windows.open("Quests")
+			end)
+		end
+	end
+end)
 
-Remotes.event("StateChanged").OnClientEvent:Connect(onState)
+Remotes.event("StateChanged").OnClientEvent:Connect(State.set)
 Remotes.event("Notify").OnClientEvent:Connect(function(message: string, kind: string?)
 	Notifications.toast(message, kind)
 	if kind == "error" then
 		Effects.playSound(Config.Sounds.Error)
+	elseif kind == "success" then
+		Effects.playSound(Config.Sounds.Purchase)
 	end
 end)
-Remotes.event("Collected").OnClientEvent:Connect(function(items: { string }, position: Vector3)
-	Effects.collected(items, position, Config.Sounds.Collect)
+Remotes.event("Collected").OnClientEvent:Connect(function(items: { string }, position: Vector3, info: any)
+	Effects.collected(items, position, info)
 end)
-Remotes.event("Sold").OnClientEvent:Connect(function(total: number, count: number, breakdown)
-	Notifications.sale(total, count, breakdown)
+Remotes.event("Sold").OnClientEvent:Connect(function(total: number, count: number, breakdown, multiplier: number)
+	Notifications.sale(total, count, breakdown, multiplier)
 	Effects.playSound(Config.Sounds.Sell)
 end)
-Remotes.event("OpenShop").OnClientEvent:Connect(function()
-	Shop.open()
+Remotes.event("OpenPanel").OnClientEvent:Connect(function(panel: string)
+	Windows.open(panel)
+	Effects.playSound(Config.Sounds.Click)
+end)
+Remotes.event("Hatched").OnClientEvent:Connect(function(crateId: string, results)
+	Hatch.play(crateId, results)
+end)
+Remotes.event("Announce").OnClientEvent:Connect(function(text: string, kind: string?)
+	Notifications.announce(text, kind)
 end)
 
--- The profile may still be loading; StateChanged will arrive once it is.
+-- The profile may still be loading; StateChanged arrives once it is.
 task.spawn(function()
 	local ok, state = pcall(function()
 		return Remotes.func("GetState"):InvokeServer()
 	end)
-	if ok and state and not lastState then
-		onState(state)
+	if ok and state and not State.current then
+		State.set(state)
 	end
 end)
 applyHoldToAll()

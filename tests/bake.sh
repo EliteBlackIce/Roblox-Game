@@ -23,7 +23,7 @@ root = sys.argv[1]
 project_path = f"{root}/default.project.json"
 project = json.load(open(project_path))
 props = json.load(open(f"{root}/map/lighting.props.json"))
-props["Technology"] = "Future"
+props["Technology"] = "ShadowMap"
 project["tree"]["Lighting"] = {"$path": "map/Lighting", "$properties": props}
 project["tree"]["Workspace"] = {"Junkyard": {"$path": "map/Junkyard.model.json"}}
 with open(project_path, "w") as f:

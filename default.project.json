@@ -29,25 +29,25 @@
       "$properties": {
         "Ambient": {
           "Color3": [
-            0.27451,
-            0.23529,
-            0.21569
+            0.43137,
+            0.41176,
+            0.47059
           ]
         },
-        "Brightness": 2.6,
-        "ClockTime": 16.2,
-        "EnvironmentDiffuseScale": 0.5,
-        "EnvironmentSpecularScale": 0.5,
-        "GeographicLatitude": 35,
+        "Brightness": 3,
+        "ClockTime": 14.5,
+        "EnvironmentDiffuseScale": 0.4,
+        "EnvironmentSpecularScale": 0.2,
+        "GeographicLatitude": 30,
         "GlobalShadows": true,
         "OutdoorAmbient": {
           "Color3": [
-            0.54902,
-            0.4902,
-            0.43137
+            0.58824,
+            0.58824,
+            0.64706
           ]
         },
-        "Technology": "Future"
+        "Technology": "ShadowMap"
       }
     }
   }

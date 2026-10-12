@@ -1,60 +1,87 @@
 # Junkyard Simulator
 
-A Roblox game where you start out broke in a scrapyard, collect junk, sell it for cash and buy upgrades.
+A low-poly Roblox simulator: start broke in a scrapyard, grab junk, sell it, upgrade your gear, unlock six themed yards, hatch Scrap Bots, and rebirth for permanent boosts.
 
 ## Open it in Roblox Studio (one click)
 
 1. **[Download JunkyardSimulator.rbxlx](https://github.com/EliteBlackIce/Roblox-Game/raw/claude/quirky-meitner-5aljnc/JunkyardSimulator.rbxlx)**
-2. Double-click the downloaded file. It opens in Roblox Studio with the whole scrapyard, all scripts and the lighting already set up.
-   (If double-clicking doesn't open Studio, open Studio and use **File → Open from File…** instead.)
+2. Double-click the file. Studio opens with the whole map, every script and the lighting already set up.
+   (If double-clicking doesn't open Studio, open Studio and use **File → Open from File…**.)
 3. Press **Play** (F5).
 
-To put it on Roblox: in Studio use **File → Publish to Roblox**.
+To put it on Roblox, use **File → Publish to Roblox**, then turn on *Game Settings → Security → Enable Studio Access to API Services* so saving and the global leaderboard work.
 
-**Live sync with Rojo (optional, for development):** install [Rojo](https://rojo.space) and its Studio plugin, run `rojo serve` in this folder and click **Connect** in Studio.
+## What's in the game
 
-**Saving progress:** turn on *Game Settings → Security → Enable Studio Access to API Services* to test DataStores in Studio. With it off, the game still runs but doesn't save.
+### Core loop
+- Hold **E** on scrap piles to grab junk. Each pile gives 3-6 grabs and respawns 18 seconds after it empties.
+- Your backpack fills up. Sell at the green **SELL** pad in any zone.
+- Spend cash on **Upgrades** (Backpack, Quick Hands, Lucky Gloves, Speedy Sneakers) and better **Tools** (8 tiers, from Rusty Grabber to Quantum Vacuum).
 
-## How to play
-
-1. Your **Rusty Grabber** is equipped when you spawn. Press `1` to re-equip it if you put it away.
-2. Walk up to a scrap pile and hold **E** to collect.
-3. When your backpack is full, go to the green **SELL** station in the plaza.
-4. Spend your cash at the blue **UPGRADE SHOP**.
-
-| Scrap | Value | Base odds |
+### 6 yards, 42 items
+| Zone | Unlock | Theme |
 |---|---|---|
-| Common Metal | $5 | 60% |
-| Copper Wire | $15 | 25% |
-| Electronic Parts | $40 | 12% |
-| Rare Mechanical Parts | $150 | 3% |
+| Scrap Heap | free | rusty heaps, barrels, tires |
+| Car Graveyard | $750 | wrecked cars, car stacks, crusher |
+| Appliance Alley | $6K | fridges, washers, a giant toaster and TV |
+| Electronics Dump | $40K | server racks, glowing circuit traces, giant monitor |
+| Shipyard Wrecks | $250K + Rebirth 1 | sea, docks, boat wrecks, lighthouse |
+| Crash Site | $1.5M + Rebirth 2 | UFO crater, rocket wreck, neon crystals |
 
-Zones: **Front Heap** (starter area), **Car Graveyard** (x1.15 luck), **Back Lot** (x1.35 luck).
+Every zone has 7 items across Common, Uncommon, Rare, Epic, Legendary and Mythic. **Mythics only drop from Golden Piles.**
+
+### Systems
+- **Scrap Bots (pets):** 4 crates in the Hub (Rusty, Chrome and Galaxy for cash, Gem for gems) hold 16 bots that boost cash and luck. They follow you around as little low-poly robots. You can equip 3 (more with perks or passes), use *Equip Best*, merge 5 copies into a **Golden** bot (x2.5 stats), or delete bots.
+- **Rebirth:** reset cash, upgrades, tools and zones for **+50% cash forever** and Rebirth Tokens. Tokens buy perks: Extra Bot Slot, Lucky Charm, Head Start, Remote Sell (sell anywhere), Auto Grabber (collects automatically) and Tool Insurance.
+- **Quests:** an 18-step quest chain that teaches the game, 3 daily quests (with a bonus for finishing all three), and a 7-day login streak.
+- **Scrap Index:** a collection book. Completing a zone's set gives +5% cash, and each Mythic found gives +10%.
+- **Live events:**
+  - A Golden Pile spawns every 2-3.5 minutes. It drops Rare or better, gives gems, and has a 3% Mythic chance.
+  - Scrap Frenzy runs every 12 minutes: x2 cash and faster grabs for 90 seconds.
+  - The whole server sees a banner when anyone finds a Legendary or Mythic.
+- **Boosts:** spend gems on x2 Cash, x2 Luck or Turbo Grab (10 minutes each; buying again stacks the time).
+- **Teleport** to any zone you've unlocked, **Codes**, **Settings** (sound, hide other bots, low effects), a global **Top Earners** board, and overhead rank tags.
+
+### Codes
+`RELEASE`, `JUNKYARD`, `SCRAPPY`, `LUCKYDAY`, `THANKYOU`. Add more in `src/server/Services/CodeService.luau`.
+
+## Making money from it (optional)
+Create game passes and developer products in the Creator Dashboard, then paste their IDs into `Config.GamePasses` / `Config.Products` in `src/shared/Config.luau`. Anything left at `0` stays switched off, and the **Store** button only appears once at least one ID is set. Ready-made passes: x2 Cash, Mega Backpack, +2 Bot Slots and VIP. Ready-made products: three gem packs.
+
+## Tuning
+All numbers live in `src/shared/`:
+- `Config.luau`: cooldowns, events, boosts and monetization
+- `Zones.luau`: zones, items, values and drop weights
+- `Tools.luau` and `Upgrades.luau`
+- `Bots.luau`: bots, crates and odds
+- `Rebirth.luau`: cost curve and perks
+- `Quests.luau`
 
 ## Project layout
-
 ```
-src/shared/   Config (all tuning numbers), Formulas (stats and weighted rolls), Remotes
-src/server/   Main.server.luau, Services/ (Data, Tool, Scrap, Economy), World/ (MapBuilder)
-map/          The baked scrapyard and lighting (generated by tests/bake.sh from MapBuilder)
-src/client/   Main.client.luau, Effects, UI/ (Hud, Shop, Notifications, Theme)
-tests/        Headless playtest against a mock engine (tests/run.sh)
+src/shared/   Catalogs (Config, Zones, Tools, Upgrades, Bots, Rebirth, Quests), Formulas, Remotes
+src/server/   Main.server.luau
+              Services/  Data, RequestRouter, Scrap, Economy, Bot, Rebirth, Quest, Event,
+                         Code, Leaderboard, Monetization, Character, Tool, Stations
+              World/     MapBuilder, Props, Builder (the low-poly map generator)
+src/client/   Main.client.luau, State, Effects, BotFollowers, Gates
+              UI/        Hud, Menu, Notifications, Hatch, Windows, Theme
+              UI/Screens/ Upgrades, Tools, Bots, Quests, Index, Rebirth, Boosts, Teleport, Codes, Settings, Store
+map/          The baked map and lighting (generated by tests/bake.sh)
+tests/        Headless playtest against a mock Roblox engine
 ```
-
-To retune the economy (prices, drop weights, cooldowns, capacity, respawn time, tools), edit `src/shared/Config.luau`.
 
 ## Security model
-
 The server owns all game state. The client can only:
-- trigger ProximityPrompts. The server checks distance, cooldown, that the tool is equipped, free capacity and whether the pile is active.
-- send an upgrade **id** to `PurchaseUpgrade`. The server looks up the price, checks that you are at the shop and can afford it, and rate-limits requests.
+- trigger ProximityPrompts. The server checks distance, cooldown, that the tool is equipped, that the zone is unlocked, and free space.
+- call one `Request(action, ...)` remote. The server routes it to a known handler, rate-limits it per action, type-checks every argument, and looks up every price, balance and distance itself.
 
-Cash, prices, inventory and upgrade effects are never read from the client. Saved data is sanitized when it loads.
+Cash, prices, items, bots and upgrade effects are never read from the client. Saves are sanitized on load, and old (v1) saves migrate automatically. Paid purchases are de-duplicated by receipt and saved immediately.
 
 ## Development
-
 ```bash
-tests/bake.sh   # re-bake map/ from MapBuilder and rebuild JunkyardSimulator.rbxlx (needs Rust/cargo + Rojo)
-tests/run.sh    # headless playtest (needs Rust/cargo)
+tests/run.sh    # headless playtest: ~190 checks covering every system (needs Rust/cargo)
+tests/bake.sh   # regenerate map/ from MapBuilder and rebuild JunkyardSimulator.rbxlx (needs cargo + Rojo)
 selene src      # lint
+rojo serve      # live-sync into Studio with the Rojo plugin
 ```
