@@ -19,9 +19,34 @@
         }
       }
     },
-    "Workspace": {},
+    "Workspace": {
+      "Junkyard": {
+        "$path": "map/Junkyard.model.json"
+      }
+    },
     "Lighting": {
+      "$path": "map/Lighting",
       "$properties": {
+        "Ambient": {
+          "Color3": [
+            0.27451,
+            0.23529,
+            0.21569
+          ]
+        },
+        "Brightness": 2.6,
+        "ClockTime": 16.2,
+        "EnvironmentDiffuseScale": 0.5,
+        "EnvironmentSpecularScale": 0.5,
+        "GeographicLatitude": 35,
+        "GlobalShadows": true,
+        "OutdoorAmbient": {
+          "Color3": [
+            0.54902,
+            0.4902,
+            0.43137
+          ]
+        },
         "Technology": "Future"
       }
     }

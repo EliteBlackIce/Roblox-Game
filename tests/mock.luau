@@ -850,6 +850,16 @@ function CollectionService:GetInstanceAddedSignal(tag)
 	return tagSignals[tag]
 end
 services.CollectionService = CollectionService
+function M.tagsOf(inst)
+	local out = {}
+	for tag, set in tags do
+		if set[inst] then
+			table.insert(out, tag)
+		end
+	end
+	table.sort(out)
+	return out
+end
 
 local TweenService = {}
 function TweenService:Create(inst, info, goals)
