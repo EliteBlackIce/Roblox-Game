@@ -1,0 +1,3131 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+      <token name="Technology">4</token>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="2">
+      <Properties>
+        <string name="Name">Shared</string>
+      </Properties>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Config</string>
+          <string name="Source"><![CDATA[--!strict
+-- Central tuning for Junkyard Simulator. Every number the economy uses lives here,
+-- and the server is the only side that acts on it.
+
+local Config = {}
+
+Config.Gameplay = {
+	StartingCash = 0,
+	BaseCapacity = 10,
+	BaseCooldown = 1.6, -- seconds between collections at upgrade level 0
+	MinCooldown = 0.5, -- collection speed can never go below this
+	CollectRange = 14, -- max studs between character and pile, checked on the server
+	SellRange = 16,
+	ShopRange = 18,
+	CooldownTolerance = 0.1, -- latency allowance on the server-side cooldown check
+	PurchaseThrottle = 0.25, -- min seconds between purchase requests per player
+	AutosaveInterval = 120,
+}
+
+Config.ScrapPiles = {
+	MinCharges = 3, -- collections a pile gives before it is used up
+	MaxCharges = 6,
+	RespawnTime = 20, -- seconds before a depleted pile comes back
+}
+
+-- Rarity tier feeds the luck formula: higher tiers benefit more from luck.
+export type ScrapType = {
+	Id: string,
+	Name: string,
+	Value: number,
+	Weight: number,
+	Tier: number,
+	Color: Color3,
+}
+
+Config.ScrapTypes = {
+	{
+		Id = "CommonMetal",
+		Name = "Common Metal",
+		Value = 5,
+		Weight = 60,
+		Tier = 0,
+		Color = Color3.fromRGB(176, 184, 192),
+	},
+	{
+		Id = "CopperWire",
+		Name = "Copper Wire",
+		Value = 15,
+		Weight = 25,
+		Tier = 1,
+		Color = Color3.fromRGB(230, 128, 60),
+	},
+	{
+		Id = "ElectronicParts",
+		Name = "Electronic Parts",
+		Value = 40,
+		Weight = 12,
+		Tier = 2,
+		Color = Color3.fromRGB(70, 200, 120),
+	},
+	{
+		Id = "RareMechanical",
+		Name = "Rare Mechanical Parts",
+		Value = 150,
+		Weight = 3,
+		Tier = 3,
+		Color = Color3.fromRGB(170, 100, 255),
+	},
+} :: { ScrapType }
+
+-- Tools are unlocked in order by the "BetterTools" upgrade (level 0 = first tool).
+export type ToolDef = {
+	Name: string,
+	Yield: number, -- items granted per collection (still capped by free space)
+	Luck: number, -- multiplies the odds of rarer scrap
+	Color: Color3,
+	Material: Enum.Material,
+}
+
+Config.Tools = {
+	{ Name = "Rusty Grabber", Yield = 1, Luck = 1.0, Color = Color3.fromRGB(140, 90, 60), Material = Enum.Material.CorrodedMetal },
+	{ Name = "Steel Grabber", Yield = 1, Luck = 1.4, Color = Color3.fromRGB(170, 175, 185), Material = Enum.Material.Metal },
+	{ Name = "Magnet Claw", Yield = 2, Luck = 1.8, Color = Color3.fromRGB(200, 50, 50), Material = Enum.Material.SmoothPlastic },
+	{ Name = "Hydraulic Claw", Yield = 2, Luck = 2.4, Color = Color3.fromRGB(255, 190, 40), Material = Enum.Material.DiamondPlate },
+	{ Name = "Plasma Extractor", Yield = 3, Luck = 3.2, Color = Color3.fromRGB(80, 220, 255), Material = Enum.Material.Neon },
+} :: { ToolDef }
+
+export type UpgradeDef = {
+	Id: string,
+	Name: string,
+	Description: string,
+	MaxLevel: number,
+	-- Price to go from `level` to `level + 1`.
+	Prices: { number },
+}
+
+Config.Upgrades = {
+	{
+		Id = "Capacity",
+		Name = "Bigger Backpack",
+		Description = "Carry more scrap before you have to sell.",
+		MaxLevel = 10,
+		Prices = { 40, 90, 175, 300, 500, 800, 1250, 1900, 2800, 4000 },
+	},
+	{
+		Id = "Speed",
+		Name = "Collection Speed",
+		Description = "Less waiting between grabs.",
+		MaxLevel = 10,
+		Prices = { 60, 120, 220, 380, 600, 900, 1350, 2000, 2900, 4200 },
+	},
+	{
+		Id = "BetterTools",
+		Name = "Better Tools",
+		Description = "Grab more scrap per pull and find rarer parts.",
+		MaxLevel = #Config.Tools - 1,
+		Prices = { 250, 900, 2600, 7500 },
+	},
+} :: { UpgradeDef }
+
+Config.CapacityPerLevel = 5
+Config.CooldownPerLevel = 0.11
+
+-- Built-in Studio content sounds, so nothing depends on external audio uploads.
+Config.Sounds = {
+	Collect = "rbxasset://sounds/collide.wav",
+	Sell = "rbxasset://sounds/electronicpingshort.wav",
+	Purchase = "rbxasset://sounds/electronicpingshort.wav",
+	Error = "rbxasset://sounds/clickfast.wav",
+	Click = "rbxasset://sounds/button.wav",
+}
+
+return Config
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">Formulas</string>
+          <string name="Source"><![CDATA[--!strict
+-- Pure functions that turn upgrade levels into gameplay stats. Shared so the
+-- client can display the same numbers the server enforces.
+
+local Config = require(script.Parent.Config)
+
+local Formulas = {}
+
+export type Levels = { [string]: number }
+
+function Formulas.getCapacity(levels: Levels): number
+	return Config.Gameplay.BaseCapacity + (levels.Capacity or 0) * Config.CapacityPerLevel
+end
+
+function Formulas.getCooldown(levels: Levels): number
+	local cooldown = Config.Gameplay.BaseCooldown - (levels.Speed or 0) * Config.CooldownPerLevel
+	return math.max(Config.Gameplay.MinCooldown, cooldown)
+end
+
+function Formulas.getTool(levels: Levels): Config.ToolDef
+	local index = math.clamp((levels.BetterTools or 0) + 1, 1, #Config.Tools)
+	return Config.Tools[index]
+end
+
+function Formulas.getUpgrade(id: string): Config.UpgradeDef?
+	for _, upgrade in Config.Upgrades do
+		if upgrade.Id == id then
+			return upgrade
+		end
+	end
+	return nil
+end
+
+-- Returns nil when the upgrade is maxed out.
+function Formulas.getUpgradePrice(id: string, currentLevel: number): number?
+	local upgrade = Formulas.getUpgrade(id)
+	if not upgrade or currentLevel >= upgrade.MaxLevel then
+		return nil
+	end
+	return upgrade.Prices[currentLevel + 1]
+end
+
+-- Human-readable effect of an upgrade at a given level.
+function Formulas.describeEffect(id: string, level: number): string
+	local levels = { [id] = level }
+	if id == "Capacity" then
+		return `{Formulas.getCapacity(levels)} slots`
+	elseif id == "Speed" then
+		return string.format("%.2fs cooldown", Formulas.getCooldown(levels))
+	elseif id == "BetterTools" then
+		local tool = Formulas.getTool(levels)
+		return `{tool.Name} (x{tool.Yield}, {string.format("%.1f", tool.Luck)} luck)`
+	end
+	return ""
+end
+
+function Formulas.getScrapType(id: string): Config.ScrapType?
+	for _, scrap in Config.ScrapTypes do
+		if scrap.Id == id then
+			return scrap
+		end
+	end
+	return nil
+end
+
+-- Weighted random pick. Luck boosts each type's weight in proportion to its tier,
+-- so commons stay common while rare parts become noticeably easier to find.
+function Formulas.rollScrap(rng: Random, luck: number): Config.ScrapType
+	local total = 0
+	local weights = table.create(#Config.ScrapTypes)
+	for i, scrap in Config.ScrapTypes do
+		local weight = scrap.Weight * (1 + (luck - 1) * scrap.Tier)
+		weights[i] = weight
+		total += weight
+	end
+
+	local roll = rng:NextNumber() * total
+	for i, scrap in Config.ScrapTypes do
+		roll -= weights[i]
+		if roll <= 0 then
+			return scrap
+		end
+	end
+	return Config.ScrapTypes[1]
+end
+
+function Formulas.formatCash(amount: number): string
+	local formatted = tostring(math.floor(amount))
+	local k
+	repeat
+		formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+	until k == 0
+	return "$" .. formatted
+end
+
+return Formulas
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="5">
+        <Properties>
+          <string name="Name">Remotes</string>
+          <string name="Source"><![CDATA[--!strict
+-- One place for remote names. The server creates them; the client waits for them.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Remotes = {}
+
+local EVENTS = {
+	"StateChanged", -- server -> client: full player state snapshot
+	"Notify", -- server -> client: toast message
+	"Collected", -- server -> client: collection effect data
+	"Sold", -- server -> client: sale summary
+	"OpenShop", -- server -> client: player used the shop prompt
+}
+
+local FUNCTIONS = {
+	"GetState", -- client -> server: initial snapshot
+	"PurchaseUpgrade", -- client -> server: upgrade id only, everything else is server-side
+}
+
+local folder: Folder
+
+local function getFolder(): Folder
+	if folder then
+		return folder
+	end
+	if RunService:IsServer() then
+		local existing = ReplicatedStorage:FindFirstChild("Remotes")
+		if existing then
+			existing:Destroy()
+		end
+		local newFolder = Instance.new("Folder")
+		newFolder.Name = "Remotes"
+		for _, name in EVENTS do
+			local remote = Instance.new("RemoteEvent")
+			remote.Name = name
+			remote.Parent = newFolder
+		end
+		for _, name in FUNCTIONS do
+			local remote = Instance.new("RemoteFunction")
+			remote.Name = name
+			remote.Parent = newFolder
+		end
+		newFolder.Parent = ReplicatedStorage
+		folder = newFolder
+	else
+		folder = ReplicatedStorage:WaitForChild("Remotes") :: Folder
+	end
+	return folder
+end
+
+function Remotes.event(name: string): RemoteEvent
+	return getFolder():WaitForChild(name) :: RemoteEvent
+end
+
+function Remotes.func(name: string): RemoteFunction
+	return getFolder():WaitForChild(name) :: RemoteFunction
+end
+
+return Remotes
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="6">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Folder" referent="7">
+      <Properties>
+        <string name="Name">Server</string>
+      </Properties>
+      <Item class="Script" referent="8">
+        <Properties>
+          <string name="Name">Main</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[--!strict
+-- Server entry point: build the world, then start every service in dependency order.
+
+local Players = game:GetService("Players")
+
+local MapBuilder = require(script.Parent.World.MapBuilder)
+local DataService = require(script.Parent.Services.DataService)
+local ToolService = require(script.Parent.Services.ToolService)
+local ScrapService = require(script.Parent.Services.ScrapService)
+local EconomyService = require(script.Parent.Services.EconomyService)
+
+-- Characters spawn only after the map exists, so nobody falls through the void.
+Players.CharacterAutoLoads = false
+
+MapBuilder.build()
+
+ToolService.start() -- registers its onLoaded hook before any profile loads
+ScrapService.start()
+EconomyService.start()
+DataService.start()
+
+local function spawnPlayer(player: Player)
+	player.CharacterAdded:Connect(function(character)
+		local humanoid = character:WaitForChild("Humanoid") :: Humanoid
+		humanoid.Died:Connect(function()
+			task.wait(Players.RespawnTime)
+			if player.Parent == Players then
+				player:LoadCharacter()
+			end
+		end)
+	end)
+	player:LoadCharacter()
+end
+
+DataService.onLoaded(function(player)
+	spawnPlayer(player)
+end)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="9">
+        <Properties>
+          <string name="Name">Services</string>
+        </Properties>
+        <Item class="ModuleScript" referent="10">
+          <Properties>
+            <string name="Name">DataService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Owns every player's authoritative data: cash, upgrade levels and carried scrap.
+-- Persists to a DataStore when available, and keeps working (without saving) in
+-- Studio sessions where API access is turned off.
+
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+
+export type Profile = {
+	Cash: number,
+	TotalEarned: number,
+	Levels: { [string]: number },
+	Inventory: { [string]: number },
+}
+
+local DataService = {}
+
+local STORE_NAME = "JunkyardSimulator_v1"
+local profiles: { [Player]: Profile } = {}
+local loaded: { [Player]: boolean } = {}
+local store: DataStore? = nil
+
+do
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(STORE_NAME)
+	end)
+	if ok then
+		store = result
+	else
+		warn("[DataService] DataStore unavailable, progress will not save:", result)
+	end
+end
+
+local function newProfile(): Profile
+	local levels = {}
+	for _, upgrade in Config.Upgrades do
+		levels[upgrade.Id] = 0
+	end
+	local inventory = {}
+	for _, scrap in Config.ScrapTypes do
+		inventory[scrap.Id] = 0
+	end
+	return {
+		Cash = Config.Gameplay.StartingCash,
+		TotalEarned = 0,
+		Levels = levels,
+		Inventory = inventory,
+	}
+end
+
+-- Copies only known keys with sane numeric values, so a corrupted or outdated
+-- save can never inject unexpected fields.
+local function sanitize(saved: any): Profile
+	local profile = newProfile()
+	if type(saved) ~= "table" then
+		return profile
+	end
+	local function int(value: any, min: number, max: number, fallback: number): number
+		if type(value) ~= "number" or value ~= value then
+			return fallback
+		end
+		return math.clamp(math.floor(value), min, max)
+	end
+	profile.Cash = int(saved.Cash, 0, 1e15, profile.Cash)
+	profile.TotalEarned = int(saved.TotalEarned, 0, 1e15, 0)
+	if type(saved.Levels) == "table" then
+		for _, upgrade in Config.Upgrades do
+			profile.Levels[upgrade.Id] = int(saved.Levels[upgrade.Id], 0, upgrade.MaxLevel, 0)
+		end
+	end
+	if type(saved.Inventory) == "table" then
+		local capacity = Formulas.getCapacity(profile.Levels)
+		local used = 0
+		for _, scrap in Config.ScrapTypes do
+			local count = int(saved.Inventory[scrap.Id], 0, capacity - used, 0)
+			profile.Inventory[scrap.Id] = count
+			used += count
+		end
+	end
+	return profile
+end
+
+local function retry<T>(attempts: number, fn: () -> T): (boolean, T | string)
+	local ok, result
+	for attempt = 1, attempts do
+		ok, result = pcall(fn)
+		if ok then
+			return true, result
+		end
+		task.wait(attempt)
+	end
+	return false, result
+end
+
+local function keyFor(player: Player): string
+	return "player_" .. player.UserId
+end
+
+function DataService.get(player: Player): Profile?
+	return profiles[player]
+end
+
+function DataService.getUsedSlots(profile: Profile): number
+	local used = 0
+	for _, count in profile.Inventory do
+		used += count
+	end
+	return used
+end
+
+-- Snapshot the client renders. Built entirely from server data.
+function DataService.buildState(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return nil
+	end
+	local tool = Formulas.getTool(profile.Levels)
+	local upgrades = {}
+	for _, upgrade in Config.Upgrades do
+		local level = profile.Levels[upgrade.Id]
+		table.insert(upgrades, {
+			Id = upgrade.Id,
+			Name = upgrade.Name,
+			Description = upgrade.Description,
+			Level = level,
+			MaxLevel = upgrade.MaxLevel,
+			Price = Formulas.getUpgradePrice(upgrade.Id, level),
+			Effect = Formulas.describeEffect(upgrade.Id, level),
+			NextEffect = if level < upgrade.MaxLevel then Formulas.describeEffect(upgrade.Id, level + 1) else nil,
+		})
+	end
+	return {
+		Cash = profile.Cash,
+		Inventory = table.clone(profile.Inventory),
+		Used = DataService.getUsedSlots(profile),
+		Capacity = Formulas.getCapacity(profile.Levels),
+		Cooldown = Formulas.getCooldown(profile.Levels),
+		ToolName = tool.Name,
+		Upgrades = upgrades,
+	}
+end
+
+-- Call after any mutation so the HUD and leaderboard stay in sync.
+function DataService.changed(player: Player)
+	local profile = profiles[player]
+	if not profile then
+		return
+	end
+	local leaderstats = player:FindFirstChild("leaderstats")
+	local cash = leaderstats and leaderstats:FindFirstChild("Cash")
+	if cash and cash:IsA("IntValue") then
+		cash.Value = profile.Cash
+	end
+	Remotes.event("StateChanged"):FireClient(player, DataService.buildState(player))
+end
+
+local function save(player: Player)
+	local profile = profiles[player]
+	if not store or not profile or not loaded[player] then
+		return
+	end
+	local ok, err = retry(3, function()
+		(store :: DataStore):UpdateAsync(keyFor(player), function()
+			return profile
+		end)
+		return true
+	end)
+	if not ok then
+		warn(`[DataService] Failed to save {player.Name}:`, err)
+	end
+end
+
+local loadedCallbacks: { (Player, Profile) -> () } = {}
+
+function DataService.onLoaded(callback: (Player, Profile) -> ())
+	table.insert(loadedCallbacks, callback)
+	for player, profile in profiles do
+		task.spawn(callback, player, profile)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local saved = nil
+	local canSave = store ~= nil
+	if store then
+		local ok, result = retry(3, function()
+			return (store :: DataStore):GetAsync(keyFor(player))
+		end)
+		if ok then
+			saved = result
+		else
+			-- Never overwrite a save we failed to read.
+			canSave = false
+			warn(`[DataService] Failed to load {player.Name}, session will not save:`, result)
+		end
+	end
+	if player.Parent ~= Players then
+		return
+	end
+
+	local profile = sanitize(saved)
+	profiles[player] = profile
+	loaded[player] = canSave
+
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	local cash = Instance.new("IntValue")
+	cash.Name = "Cash"
+	cash.Value = profile.Cash
+	cash.Parent = leaderstats
+	leaderstats.Parent = player
+
+	for _, callback in loadedCallbacks do
+		task.spawn(callback, player, profile)
+	end
+	DataService.changed(player)
+end
+
+function DataService.start()
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	for _, player in Players:GetPlayers() do
+		task.spawn(onPlayerAdded, player)
+	end
+
+	Players.PlayerRemoving:Connect(function(player)
+		save(player)
+		profiles[player] = nil
+		loaded[player] = nil
+	end)
+
+	game:BindToClose(function()
+		local pending = 0
+		for player in profiles do
+			pending += 1
+			task.spawn(function()
+				save(player)
+				pending -= 1
+			end)
+		end
+		local deadline = os.clock() + 25
+		while pending > 0 and os.clock() < deadline do
+			task.wait(0.1)
+		end
+	end)
+
+	task.spawn(function()
+		while true do
+			task.wait(Config.Gameplay.AutosaveInterval)
+			for player in profiles do
+				task.spawn(save, player)
+			end
+		end
+	end)
+
+	Remotes.func("GetState").OnServerInvoke = function(player)
+		return DataService.buildState(player)
+	end
+end
+
+return DataService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="11">
+          <Properties>
+            <string name="Name">EconomyService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Selling and upgrade purchases. The client only ever sends an upgrade id; prices,
+-- cash, inventory and effects are all looked up and changed here.
+
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local DataService = require(script.Parent.DataService)
+local ToolService = require(script.Parent.ToolService)
+
+local EconomyService = {}
+
+local lastPurchase: { [Player]: number } = {}
+
+local function distanceTo(player: Player, part: BasePart): number
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or not root:IsA("BasePart") then
+		return math.huge
+	end
+	return (root.Position - part.Position).Magnitude
+end
+
+local function nearTagged(player: Player, tag: string, range: number): boolean
+	for _, station in CollectionService:GetTagged(tag) do
+		local anchor = station:FindFirstChild("PromptAnchor")
+		if anchor and anchor:IsA("BasePart") and distanceTo(player, anchor) <= range then
+			return true
+		end
+	end
+	return false
+end
+
+local function sell(player: Player)
+	local profile = DataService.get(player)
+	if not profile then
+		return
+	end
+	if not nearTagged(player, "SellStation", Config.Gameplay.SellRange) then
+		return
+	end
+
+	local total = 0
+	local count = 0
+	local breakdown = {}
+	for _, scrap in Config.ScrapTypes do
+		local amount = profile.Inventory[scrap.Id] or 0
+		if amount > 0 then
+			local earned = amount * scrap.Value
+			total += earned
+			count += amount
+			table.insert(breakdown, { Id = scrap.Id, Count = amount, Earned = earned })
+		end
+		profile.Inventory[scrap.Id] = 0
+	end
+
+	if count == 0 then
+		Remotes.event("Notify"):FireClient(player, "Nothing to sell! Collect scrap from the piles first.", "error")
+		return
+	end
+
+	profile.Cash += total
+	profile.TotalEarned += total
+	Remotes.event("Sold"):FireClient(player, total, count, breakdown)
+	DataService.changed(player)
+end
+
+local function purchase(player: Player, upgradeId: unknown): (boolean, string)
+	local now = os.clock()
+	if lastPurchase[player] and now - lastPurchase[player] < Config.Gameplay.PurchaseThrottle then
+		return false, "Slow down!"
+	end
+	lastPurchase[player] = now
+
+	if type(upgradeId) ~= "string" then
+		return false, "Invalid upgrade."
+	end
+	local upgrade = Formulas.getUpgrade(upgradeId)
+	local profile = DataService.get(player)
+	if not upgrade or not profile then
+		return false, "Invalid upgrade."
+	end
+	if not nearTagged(player, "UpgradeShop", Config.Gameplay.ShopRange) then
+		return false, "Walk back to the Upgrade Shop to buy."
+	end
+
+	local level = profile.Levels[upgrade.Id]
+	local price = Formulas.getUpgradePrice(upgrade.Id, level)
+	if not price then
+		return false, `{upgrade.Name} is already maxed out!`
+	end
+	if profile.Cash < price then
+		return false, `You need {Formulas.formatCash(price - profile.Cash)} more.`
+	end
+
+	profile.Cash -= price
+	profile.Levels[upgrade.Id] = level + 1
+
+	if upgrade.Id == "BetterTools" then
+		ToolService.refresh(player)
+	end
+	DataService.changed(player)
+	return true, `{upgrade.Name} upgraded to level {level + 1}!`
+end
+
+local function connectPrompt(tag: string, promptName: string, handler: (Player) -> ())
+	local function register(station: Instance)
+		local anchor = station:FindFirstChild("PromptAnchor")
+		local prompt = anchor and anchor:FindFirstChild(promptName)
+		if prompt and prompt:IsA("ProximityPrompt") then
+			prompt.Triggered:Connect(handler)
+		else
+			warn(`[EconomyService] {tag} missing PromptAnchor/{promptName}:`, station:GetFullName())
+		end
+	end
+	for _, station in CollectionService:GetTagged(tag) do
+		register(station)
+	end
+	CollectionService:GetInstanceAddedSignal(tag):Connect(register)
+end
+
+function EconomyService.start()
+	connectPrompt("SellStation", "SellPrompt", sell)
+	connectPrompt("UpgradeShop", "ShopPrompt", function(player)
+		Remotes.event("OpenShop"):FireClient(player)
+	end)
+
+	Remotes.func("PurchaseUpgrade").OnServerInvoke = purchase
+
+	Players.PlayerRemoving:Connect(function(player)
+		lastPurchase[player] = nil
+	end)
+end
+
+return EconomyService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
+            <string name="Name">ScrapService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Scrap piles: server-validated collection, weighted loot rolls, depletion and respawn.
+-- Piles are any Model tagged "ScrapPile" with a "PromptAnchor" part inside.
+
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local DataService = require(script.Parent.DataService)
+local ToolService = require(script.Parent.ToolService)
+
+local ScrapService = {}
+
+local PILE_TAG = "ScrapPile"
+local rng = Random.new()
+local lastCollect: { [Player]: number } = {}
+local lastWarning: { [Player]: number } = {}
+
+local notifyRemote: RemoteEvent
+local collectedRemote: RemoteEvent
+
+local function notify(player: Player, message: string, kind: string)
+	-- Throttle repeated warnings so holding the prompt does not spam toasts.
+	local now = os.clock()
+	if kind == "error" and lastWarning[player] and now - lastWarning[player] < 1.5 then
+		return
+	end
+	if kind == "error" then
+		lastWarning[player] = now
+	end
+	notifyRemote:FireClient(player, message, kind)
+end
+
+local function getAnchor(pile: Model): BasePart?
+	local anchor = pile:FindFirstChild("PromptAnchor")
+	return if anchor and anchor:IsA("BasePart") then anchor else nil
+end
+
+local function getPrompt(pile: Model): ProximityPrompt?
+	local anchor = getAnchor(pile)
+	local prompt = anchor and anchor:FindFirstChild("CollectPrompt")
+	return if prompt and prompt:IsA("ProximityPrompt") then prompt else nil
+end
+
+local function updatePromptText(pile: Model)
+	local prompt = getPrompt(pile)
+	if prompt then
+		local charges = pile:GetAttribute("Charges") or 0
+		local zone = pile:GetAttribute("ZoneName") or "Scrap Pile"
+		prompt.ObjectText = `{zone} • {charges} left`
+	end
+end
+
+local function setVisible(pile: Model, visible: boolean)
+	local info = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	for _, part in pile:GetDescendants() do
+		if part:IsA("BasePart") and part.Name ~= "PromptAnchor" and not part:GetAttribute("Persistent") then
+			local original = part:GetAttribute("OriginalTransparency")
+			if original == nil then
+				original = part.Transparency
+				part:SetAttribute("OriginalTransparency", original)
+			end
+			part.CanCollide = visible and part:GetAttribute("OriginalCollide") ~= false
+			TweenService:Create(part, info, { Transparency = if visible then original else 1 }):Play()
+		end
+	end
+end
+
+local function refill(pile: Model)
+	local charges = rng:NextInteger(Config.ScrapPiles.MinCharges, Config.ScrapPiles.MaxCharges)
+	pile:SetAttribute("Charges", charges)
+	pile:SetAttribute("Active", true)
+	setVisible(pile, true)
+	local prompt = getPrompt(pile)
+	if prompt then
+		prompt.Enabled = true
+	end
+	updatePromptText(pile)
+end
+
+local function deplete(pile: Model)
+	pile:SetAttribute("Active", false)
+	local prompt = getPrompt(pile)
+	if prompt then
+		prompt.Enabled = false
+	end
+	setVisible(pile, false)
+	task.delay(Config.ScrapPiles.RespawnTime, refill, pile)
+end
+
+local function collect(player: Player, pile: Model)
+	local profile = DataService.get(player)
+	if not profile or pile:GetAttribute("Active") ~= true then
+		return
+	end
+	local charges = pile:GetAttribute("Charges")
+	if type(charges) ~= "number" or charges <= 0 then
+		return
+	end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local anchor = getAnchor(pile)
+	if not root or not root:IsA("BasePart") or not anchor then
+		return
+	end
+	if (root.Position - anchor.Position).Magnitude > Config.Gameplay.CollectRange then
+		return
+	end
+
+	if not ToolService.isHoldingTool(player) then
+		notify(player, "Equip your grabber first! (press 1)", "error")
+		return
+	end
+
+	local now = os.clock()
+	local cooldown = Formulas.getCooldown(profile.Levels)
+	if lastCollect[player] and now - lastCollect[player] < cooldown - Config.Gameplay.CooldownTolerance then
+		return
+	end
+
+	local free = Formulas.getCapacity(profile.Levels) - DataService.getUsedSlots(profile)
+	if free <= 0 then
+		notify(player, "Backpack full! Sell your scrap at the SELL station.", "error")
+		return
+	end
+
+	lastCollect[player] = now
+	local tool = Formulas.getTool(profile.Levels)
+	local luck = tool.Luck * (pile:GetAttribute("ZoneLuck") or 1)
+	local amount = math.min(tool.Yield, free)
+
+	local items = {}
+	for _ = 1, amount do
+		local scrap = Formulas.rollScrap(rng, luck)
+		profile.Inventory[scrap.Id] += 1
+		table.insert(items, scrap.Id)
+	end
+
+	pile:SetAttribute("Charges", charges - 1)
+	updatePromptText(pile)
+	if charges - 1 <= 0 then
+		deplete(pile)
+	end
+
+	collectedRemote:FireClient(player, items, anchor.Position)
+	DataService.changed(player)
+end
+
+local function registerPile(pile: Instance)
+	if not pile:IsA("Model") then
+		return
+	end
+	local prompt = getPrompt(pile)
+	if not prompt then
+		warn("[ScrapService] Scrap pile missing PromptAnchor/CollectPrompt:", pile:GetFullName())
+		return
+	end
+	for _, part in pile:GetDescendants() do
+		if part:IsA("BasePart") then
+			part:SetAttribute("OriginalCollide", part.CanCollide)
+		end
+	end
+	prompt.Triggered:Connect(function(player)
+		collect(player, pile)
+	end)
+	refill(pile)
+end
+
+function ScrapService.start()
+	notifyRemote = Remotes.event("Notify")
+	collectedRemote = Remotes.event("Collected")
+
+	for _, pile in CollectionService:GetTagged(PILE_TAG) do
+		registerPile(pile)
+	end
+	CollectionService:GetInstanceAddedSignal(PILE_TAG):Connect(registerPile)
+
+	Players.PlayerRemoving:Connect(function(player)
+		lastCollect[player] = nil
+		lastWarning[player] = nil
+	end)
+end
+
+return ScrapService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="13">
+          <Properties>
+            <string name="Name">ToolService</string>
+            <string name="Source"><![CDATA[--!strict
+-- Builds each player's collection tool from their BetterTools level and keeps it
+-- equipped-ready across respawns and upgrades.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local DataService = require(script.Parent.DataService)
+
+local ToolService = {}
+
+local TOOL_TAG = "JunkyardTool"
+
+local function buildTool(tool: Config.ToolDef): Tool
+	local instance = Instance.new("Tool")
+	instance.Name = tool.Name
+	instance.ToolTip = `Yield x{tool.Yield} • Luck {string.format("%.1f", tool.Luck)}`
+	instance.CanBeDropped = false
+	instance.RequiresHandle = true
+	instance.Grip = CFrame.new(0, -1, 0) * CFrame.Angles(math.rad(-90), 0, 0)
+	instance:SetAttribute(TOOL_TAG, true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.35, 0.35, 3.2)
+	handle.Color = Color3.fromRGB(60, 60, 64)
+	handle.Material = Enum.Material.Metal
+	handle.CanCollide = false
+	handle.Massless = true
+	handle.Parent = instance
+
+	local function attach(name: string, size: Vector3, offset: CFrame, color: Color3, material: Enum.Material)
+		local part = Instance.new("Part")
+		part.Name = name
+		part.Size = size
+		part.Color = color
+		part.Material = material
+		part.CanCollide = false
+		part.Massless = true
+		part.CFrame = handle.CFrame * offset
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = handle
+		weld.Part1 = part
+		weld.Parent = part
+		part.Parent = instance
+	end
+
+	-- Grip wrap and a two-pronged claw at the far end, colored by tier.
+	attach("Grip", Vector3.new(0.5, 0.5, 0.9), CFrame.new(0, 0, 1.1), Color3.fromRGB(30, 30, 30), Enum.Material.Fabric)
+	attach("ClawBase", Vector3.new(1, 0.4, 0.4), CFrame.new(0, 0, -1.7), tool.Color, tool.Material)
+	attach("ClawLeft", Vector3.new(0.2, 0.3, 0.8), CFrame.new(-0.45, 0, -2.2) * CFrame.Angles(0, math.rad(12), 0), tool.Color, tool.Material)
+	attach("ClawRight", Vector3.new(0.2, 0.3, 0.8), CFrame.new(0.45, 0, -2.2) * CFrame.Angles(0, math.rad(-12), 0), tool.Color, tool.Material)
+
+	return instance
+end
+
+local function removeTools(container: Instance?)
+	if not container then
+		return
+	end
+	for _, child in container:GetChildren() do
+		if child:IsA("Tool") and child:GetAttribute(TOOL_TAG) then
+			child:Destroy()
+		end
+	end
+end
+
+-- Replaces whatever tool the player has with the one matching their level.
+function ToolService.refresh(player: Player)
+	local profile = DataService.get(player)
+	if not profile then
+		return
+	end
+	local character = player.Character
+	local wasEquipped = false
+	if character then
+		for _, child in character:GetChildren() do
+			if child:IsA("Tool") and child:GetAttribute(TOOL_TAG) then
+				wasEquipped = true
+			end
+		end
+	end
+	removeTools(player:FindFirstChildOfClass("Backpack"))
+	removeTools(character)
+
+	local def = Formulas.getTool(profile.Levels)
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if backpack then
+		local tool = buildTool(def)
+		tool.Parent = backpack
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			-- Start equipped so new players can immediately use it.
+			if humanoid and (wasEquipped or not character:GetAttribute("ToolGiven")) then
+				humanoid:EquipTool(tool)
+				character:SetAttribute("ToolGiven", true)
+			end
+		end
+	end
+end
+
+function ToolService.isHoldingTool(player: Player): boolean
+	local character = player.Character
+	if not character then
+		return false
+	end
+	for _, child in character:GetChildren() do
+		if child:IsA("Tool") and child:GetAttribute(TOOL_TAG) then
+			return true
+		end
+	end
+	return false
+end
+
+function ToolService.start()
+	DataService.onLoaded(function(player)
+		player.CharacterAdded:Connect(function(character)
+			character:WaitForChild("Humanoid")
+			player:WaitForChild("Backpack")
+			ToolService.refresh(player)
+		end)
+		if player.Character then
+			ToolService.refresh(player)
+		end
+	end)
+end
+
+return ToolService
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="Folder" referent="14">
+        <Properties>
+          <string name="Name">World</string>
+        </Properties>
+        <Item class="ModuleScript" referent="15">
+          <Properties>
+            <string name="Name">Builder</string>
+            <string name="Source"><![CDATA[--!strict
+-- Small helpers for constructing anchored scenery from code.
+
+local Builder = {}
+
+export type PartProps = {
+	Name: string?,
+	Size: Vector3,
+	CFrame: CFrame,
+	Color: Color3?,
+	Material: Enum.Material?,
+	Shape: Enum.PartType?,
+	Transparency: number?,
+	CanCollide: boolean?,
+	CastShadow: boolean?,
+	Reflectance: number?,
+}
+
+function Builder.part(parent: Instance, props: PartProps): Part
+	local part = Instance.new("Part")
+	part.Name = props.Name or "Part"
+	part.Anchored = true
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	if props.Shape then
+		part.Shape = props.Shape
+	end
+	part.Size = props.Size
+	part.CFrame = props.CFrame
+	part.Color = props.Color or Color3.fromRGB(120, 120, 120)
+	part.Material = props.Material or Enum.Material.SmoothPlastic
+	part.Transparency = props.Transparency or 0
+	part.Reflectance = props.Reflectance or 0
+	if props.CanCollide ~= nil then
+		part.CanCollide = props.CanCollide
+	end
+	if props.CastShadow ~= nil then
+		part.CastShadow = props.CastShadow
+	end
+	part.Parent = parent
+	return part
+end
+
+function Builder.wedge(parent: Instance, props: PartProps): WedgePart
+	local part = Instance.new("WedgePart")
+	part.Name = props.Name or "Wedge"
+	part.Anchored = true
+	part.Size = props.Size
+	part.CFrame = props.CFrame
+	part.Color = props.Color or Color3.fromRGB(120, 120, 120)
+	part.Material = props.Material or Enum.Material.SmoothPlastic
+	if props.CanCollide ~= nil then
+		part.CanCollide = props.CanCollide
+	end
+	part.Parent = parent
+	return part
+end
+
+function Builder.model(parent: Instance, name: string): Model
+	local model = Instance.new("Model")
+	model.Name = name
+	model.Parent = parent
+	return model
+end
+
+function Builder.folder(parent: Instance, name: string): Folder
+	local folder = Instance.new("Folder")
+	folder.Name = name
+	folder.Parent = parent
+	return folder
+end
+
+-- Upright cylinder (Roblox cylinders run along X, so rotate onto Y).
+function Builder.cylinder(parent: Instance, name: string, position: Vector3, height: number, diameter: number, color: Color3, material: Enum.Material?): Part
+	return Builder.part(parent, {
+		Name = name,
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(height, diameter, diameter),
+		CFrame = CFrame.new(position) * CFrame.Angles(0, 0, math.rad(90)),
+		Color = color,
+		Material = material,
+	})
+end
+
+-- A thin slab lying on the ground between two points.
+function Builder.path(parent: Instance, from: Vector3, to: Vector3, width: number, color: Color3, material: Enum.Material, height: number?): Part
+	local flatFrom = Vector3.new(from.X, 0, from.Z)
+	local flatTo = Vector3.new(to.X, 0, to.Z)
+	local length = (flatTo - flatFrom).Magnitude
+	local mid = (flatFrom + flatTo) / 2
+	local y = height or 0.05
+	return Builder.part(parent, {
+		Name = "Path",
+		Size = Vector3.new(width, 0.2, length + width * 0.5),
+		CFrame = CFrame.lookAt(mid + Vector3.new(0, y, 0), flatTo + Vector3.new(0, y, 0)),
+		Color = color,
+		Material = material,
+		CastShadow = false,
+	})
+end
+
+-- Sign board with text on its front face. `facing` is the direction the text faces.
+function Builder.sign(parent: Instance, text: string, position: Vector3, facing: Vector3, size: Vector2, background: Color3, textColor: Color3): Part
+	local board = Builder.part(parent, {
+		Name = "Sign",
+		Size = Vector3.new(size.X, size.Y, 0.4),
+		CFrame = CFrame.lookAt(position, position + facing),
+		Color = background,
+		Material = Enum.Material.SmoothPlastic,
+	})
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.LightInfluence = 0.2
+	gui.Parent = board
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = textColor
+	label.Parent = gui
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0.05, 0)
+	padding.PaddingRight = UDim.new(0.05, 0)
+	padding.PaddingTop = UDim.new(0.1, 0)
+	padding.PaddingBottom = UDim.new(0.1, 0)
+	padding.Parent = label
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 3
+	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Transparency = 0.4
+	stroke.Parent = label
+	return board
+end
+
+-- Floating label visible from a distance, used to guide players to key stations.
+function Builder.billboard(adornee: BasePart, text: string, color: Color3, offsetY: number)
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Marker"
+	gui.Size = UDim2.fromOffset(220, 60)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, offsetY, 0)
+	gui.MaxDistance = 250
+	gui.LightInfluence = 0
+	gui.Adornee = adornee
+	gui.Parent = adornee
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = color
+	label.Parent = gui
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 3
+	stroke.Parent = label
+end
+
+function Builder.prompt(anchor: BasePart, name: string, action: string, object: string, hold: number, distance: number): ProximityPrompt
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = name
+	prompt.ActionText = action
+	prompt.ObjectText = object
+	prompt.HoldDuration = hold
+	prompt.MaxActivationDistance = distance
+	prompt.RequiresLineOfSight = false
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.Parent = anchor
+	return prompt
+end
+
+return Builder
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">MapBuilder</string>
+            <string name="Source"><![CDATA[--!strict
+-- Builds the whole scrapyard out of anchored parts.
+--
+-- Runs automatically when the server starts if Workspace has no "Junkyard" model.
+-- To bake the map into the place permanently (so you can hand-edit it in Studio),
+-- paste this into the Studio command bar while NOT playtesting, then save:
+--   require(game.ServerScriptService.Server.World.MapBuilder).build()
+--
+-- Layout (north is -Z):
+--   South gate + spawn (z ~ 185) -> road north -> Hub plaza (z ~ 70) with SELL (west) and SHOP (east)
+--   Front Heap (centre), Car Graveyard (north-west), Back Lot (north-east, rarer finds)
+
+local CollectionService = game:GetService("CollectionService")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+
+local Builder = require(script.Parent.Builder)
+
+local MapBuilder = {}
+
+local rng = Random.new(1337) -- fixed seed: same layout every time
+
+local C = {
+	Dirt = Color3.fromRGB(122, 98, 72),
+	Gravel = Color3.fromRGB(150, 140, 125),
+	Road = Color3.fromRGB(70, 68, 66),
+	Concrete = Color3.fromRGB(170, 168, 160),
+	Rust = Color3.fromRGB(150, 75, 40),
+	DarkRust = Color3.fromRGB(105, 55, 35),
+	Steel = Color3.fromRGB(150, 155, 165),
+	DarkSteel = Color3.fromRGB(80, 84, 92),
+	Yellow = Color3.fromRGB(245, 190, 40),
+	Black = Color3.fromRGB(28, 28, 30),
+	Green = Color3.fromRGB(60, 200, 90),
+	Blue = Color3.fromRGB(50, 130, 230),
+	White = Color3.fromRGB(255, 255, 255),
+}
+
+local CAR_COLORS = {
+	Color3.fromRGB(150, 60, 50),
+	Color3.fromRGB(70, 100, 140),
+	Color3.fromRGB(90, 120, 80),
+	Color3.fromRGB(190, 160, 90),
+	Color3.fromRGB(120, 110, 105),
+}
+
+local JUNK_COLORS = {
+	C.Rust,
+	C.DarkRust,
+	C.Steel,
+	C.DarkSteel,
+	Color3.fromRGB(200, 120, 60), -- copper
+	Color3.fromRGB(60, 110, 70), -- circuit green
+	Color3.fromRGB(180, 170, 60), -- faded yellow
+}
+
+local MAP_HALF = 170 -- fence runs along +-MAP_HALF
+local GATE_HALF = 14
+
+local function ground(parent: Instance)
+	Builder.part(parent, {
+		Name = "Ground",
+		Size = Vector3.new(460, 4, 460),
+		CFrame = CFrame.new(0, -2, 10),
+		Color = C.Dirt,
+		Material = Enum.Material.Ground,
+	})
+	-- Patches of gravel break up the flat dirt.
+	for _ = 1, 14 do
+		local size = rng:NextNumber(18, 40)
+		Builder.part(parent, {
+			Name = "GravelPatch",
+			Size = Vector3.new(size, 0.1, size * rng:NextNumber(0.6, 1.2)),
+			CFrame = CFrame.new(rng:NextNumber(-150, 150), 0.02, rng:NextNumber(-150, 150))
+				* CFrame.Angles(0, rng:NextNumber(0, math.pi), 0),
+			Color = C.Gravel,
+			Material = Enum.Material.Pebble,
+			CastShadow = false,
+		})
+	end
+end
+
+local function fenceSegment(parent: Instance, from: Vector3, to: Vector3)
+	local length = (to - from).Magnitude
+	local mid = (from + to) / 2
+	local look = CFrame.lookAt(mid, to)
+	Builder.part(parent, {
+		Name = "FencePanel",
+		Size = Vector3.new(0.3, 9, length),
+		CFrame = look + Vector3.new(0, 4.5, 0),
+		Color = C.DarkSteel,
+		Material = Enum.Material.DiamondPlate,
+		Transparency = 0.15,
+	})
+	Builder.part(parent, {
+		Name = "FenceRail",
+		Size = Vector3.new(0.5, 0.5, length),
+		CFrame = look + Vector3.new(0, 9.2, 0),
+		Color = C.Rust,
+		Material = Enum.Material.CorrodedMetal,
+	})
+	Builder.cylinder(parent, "FencePost", from + Vector3.new(0, 5, 0), 10, 0.9, C.Rust, Enum.Material.CorrodedMetal)
+end
+
+local function perimeterFence(parent: Instance)
+	local folder = Builder.folder(parent, "Fence")
+	local step = 34
+	local corners = {
+		Vector3.new(-MAP_HALF, 0, MAP_HALF),
+		Vector3.new(-MAP_HALF, 0, -MAP_HALF),
+		Vector3.new(MAP_HALF, 0, -MAP_HALF),
+		Vector3.new(MAP_HALF, 0, MAP_HALF),
+	}
+	-- West, north and east walls.
+	for i = 1, 3 do
+		local a, b = corners[i], corners[i + 1]
+		local count = math.ceil((b - a).Magnitude / step)
+		for s = 0, count - 1 do
+			fenceSegment(folder, a:Lerp(b, s / count), a:Lerp(b, (s + 1) / count))
+		end
+	end
+	-- South wall, split around the gate.
+	for _, side in { -1, 1 } do
+		local outer = Vector3.new(side * MAP_HALF, 0, MAP_HALF)
+		local inner = Vector3.new(side * GATE_HALF, 0, MAP_HALF)
+		local count = math.ceil((inner - outer).Magnitude / step)
+		for s = 0, count - 1 do
+			fenceSegment(folder, outer:Lerp(inner, s / count), outer:Lerp(inner, (s + 1) / count))
+		end
+	end
+	Builder.cylinder(folder, "FencePost", Vector3.new(MAP_HALF, 5, MAP_HALF), 10, 0.9, C.Rust, Enum.Material.CorrodedMetal)
+end
+
+local function entrance(parent: Instance)
+	local model = Builder.model(parent, "Entrance")
+	local z = MAP_HALF
+	for _, side in { -1, 1 } do
+		Builder.part(model, {
+			Name = "GatePillar",
+			Size = Vector3.new(3, 18, 3),
+			CFrame = CFrame.new(side * (GATE_HALF + 1.5), 9, z),
+			Color = C.Yellow,
+			Material = Enum.Material.DiamondPlate,
+		})
+		-- Hazard stripes on the pillars.
+		for stripe = 0, 3 do
+			Builder.part(model, {
+				Name = "Stripe",
+				Size = Vector3.new(3.1, 1, 3.1),
+				CFrame = CFrame.new(side * (GATE_HALF + 1.5), 2 + stripe * 2.2, z),
+				Color = C.Black,
+				Material = Enum.Material.SmoothPlastic,
+			})
+		end
+		-- An open gate swung back against the fence.
+		Builder.part(model, {
+			Name = "GateDoor",
+			Size = Vector3.new(0.4, 8, 12),
+			CFrame = CFrame.new(side * (GATE_HALF + 3.5), 4, z - 6.5),
+			Color = C.DarkSteel,
+			Material = Enum.Material.DiamondPlate,
+			Transparency = 0.2,
+		})
+	end
+	Builder.part(model, {
+		Name = "ArchBeam",
+		Size = Vector3.new(GATE_HALF * 2 + 6, 2, 3),
+		CFrame = CFrame.new(0, 18, z),
+		Color = C.Yellow,
+		Material = Enum.Material.DiamondPlate,
+	})
+	Builder.sign(model, "JUNKYARD SIMULATOR", Vector3.new(0, 22, z + 0.2), Vector3.new(0, 0, 1), Vector2.new(30, 6), C.Rust, C.Yellow)
+	Builder.sign(model, "JUNKYARD SIMULATOR", Vector3.new(0, 22, z - 0.2), Vector3.new(0, 0, -1), Vector2.new(30, 6), C.Rust, C.Yellow)
+
+	-- Spawn pad outside the gate.
+	Builder.part(model, {
+		Name = "SpawnPad",
+		Size = Vector3.new(44, 0.4, 30),
+		CFrame = CFrame.new(0, 0.1, z + 18),
+		Color = C.Concrete,
+		Material = Enum.Material.Concrete,
+	})
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "SpawnLocation"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(12, 1, 12)
+	spawn.CFrame = CFrame.new(0, 0.5, z + 20) * CFrame.Angles(0, 0, 0)
+	spawn.Color = C.Yellow
+	spawn.Material = Enum.Material.DiamondPlate
+	spawn.Duration = 0
+	spawn.Neutral = true
+	spawn.TopSurface = Enum.SurfaceType.Smooth
+	spawn.Parent = model
+	local decal = spawn:FindFirstChildOfClass("Decal")
+	if decal then
+		decal:Destroy()
+	end
+
+	Builder.cylinder(model, "SignPost", Vector3.new(-14, 1.5, z + 8.3), 3, 0.6, C.DarkSteel, Enum.Material.Metal)
+	Builder.sign(model, "Collect scrap > Sell it > Buy upgrades!", Vector3.new(-14, 5, z + 8), Vector3.new(0, 0, 1), Vector2.new(14, 4), C.DarkSteel, C.White)
+end
+
+local function lightPole(parent: Instance, position: Vector3)
+	local model = Builder.model(parent, "LightPole")
+	Builder.cylinder(model, "Pole", position + Vector3.new(0, 8, 0), 16, 0.8, C.DarkSteel, Enum.Material.Metal)
+	Builder.part(model, {
+		Name = "Arm",
+		Size = Vector3.new(0.5, 0.5, 4),
+		CFrame = CFrame.new(position + Vector3.new(0, 16, 1.5)),
+		Color = C.DarkSteel,
+		Material = Enum.Material.Metal,
+	})
+	local lamp = Builder.part(model, {
+		Name = "Lamp",
+		Size = Vector3.new(1.6, 0.6, 2.2),
+		CFrame = CFrame.new(position + Vector3.new(0, 15.6, 3)),
+		Color = Color3.fromRGB(255, 220, 160),
+		Material = Enum.Material.Neon,
+		CastShadow = false,
+	})
+	local light = Instance.new("SpotLight")
+	light.Face = Enum.NormalId.Bottom
+	light.Angle = 110
+	light.Range = 40
+	light.Brightness = 2
+	light.Color = Color3.fromRGB(255, 210, 150)
+	light.Parent = lamp
+end
+
+local function paths(parent: Instance)
+	local folder = Builder.folder(parent, "Paths")
+	local road, gravel = C.Road, Color3.fromRGB(105, 98, 90)
+	-- Main road: gate -> hub.
+	Builder.path(folder, Vector3.new(0, 0, MAP_HALF + 8), Vector3.new(0, 0, 95), 18, road, Enum.Material.Asphalt)
+	-- Hub -> Front Heap.
+	Builder.path(folder, Vector3.new(0, 0, 45), Vector3.new(0, 0, 18), 12, gravel, Enum.Material.Pebble)
+	-- Hub -> Car Graveyard and Back Lot.
+	Builder.path(folder, Vector3.new(-20, 0, 50), Vector3.new(-80, 0, -10), 10, gravel, Enum.Material.Pebble)
+	Builder.path(folder, Vector3.new(20, 0, 50), Vector3.new(78, 0, -62), 10, gravel, Enum.Material.Pebble)
+	-- Ring connection between the outer zones through the north.
+	Builder.path(folder, Vector3.new(-80, 0, -60), Vector3.new(60, 0, -110), 8, gravel, Enum.Material.Pebble, 0)
+
+	for _, z in { 160, 130, 100 } do
+		lightPole(folder, Vector3.new(-12, 0, z))
+		lightPole(folder, Vector3.new(12, 0, z))
+	end
+end
+
+local function hub(parent: Instance)
+	local model = Builder.model(parent, "HubPlaza")
+	Builder.part(model, {
+		Name = "Plaza",
+		Size = Vector3.new(120, 0.3, 54),
+		CFrame = CFrame.new(0, 0.1, 70),
+		Color = C.Concrete,
+		Material = Enum.Material.Concrete,
+	})
+	-- Painted guide lines on the plaza pointing to each station.
+	Builder.part(model, {
+		Name = "GuideLineWest",
+		Size = Vector3.new(30, 0.05, 1),
+		CFrame = CFrame.new(-22, 0.28, 70),
+		Color = C.Green,
+		Material = Enum.Material.Neon,
+		CastShadow = false,
+	})
+	Builder.part(model, {
+		Name = "GuideLineEast",
+		Size = Vector3.new(30, 0.05, 1),
+		CFrame = CFrame.new(22, 0.28, 70),
+		Color = C.Blue,
+		Material = Enum.Material.Neon,
+		CastShadow = false,
+	})
+	lightPole(model, Vector3.new(-30, 0, 92))
+	lightPole(model, Vector3.new(30, 0, 92))
+end
+
+local function sellStation(parent: Instance)
+	local model = Builder.model(parent, "SellStation")
+	local base = CFrame.new(-48, 0, 70) * CFrame.Angles(0, math.rad(-90), 0) -- faces +X (towards the plaza)
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+
+	Builder.part(model, {
+		Name = "Scale",
+		Size = Vector3.new(18, 0.6, 12),
+		CFrame = at(0, 0.3, -6),
+		Color = C.Steel,
+		Material = Enum.Material.DiamondPlate,
+	})
+	-- Booth: back wall, side walls, roof, counter.
+	Builder.part(model, { Name = "BackWall", Size = Vector3.new(20, 12, 1), CFrame = at(0, 6, 6), Color = C.Green, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 12, 10), CFrame = at(-9.5, 6, 1.5), Color = C.Green, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 12, 10), CFrame = at(9.5, 6, 1.5), Color = C.Green, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "Roof", Size = Vector3.new(22, 1, 13), CFrame = at(0, 12.5, 0.5), Color = C.DarkSteel, Material = Enum.Material.CorrodedMetal })
+	Builder.part(model, { Name = "Counter", Size = Vector3.new(14, 3.5, 2.5), CFrame = at(0, 1.75, -2), Color = C.DarkSteel, Material = Enum.Material.DiamondPlate })
+	-- Coin bin on the counter.
+	Builder.cylinder(model, "CashBin", (at(4, 4.1, -2)).Position, 1.4, 2.2, C.Yellow, Enum.Material.Metal)
+
+	Builder.sign(model, "$ SELL SCRAP $", (at(0, 15.5, -0.2)).Position, base.LookVector, Vector2.new(18, 4.5), C.Green, C.White)
+
+	-- A hydraulic crusher next to the booth for flavour.
+	Builder.part(model, { Name = "CrusherBase", Size = Vector3.new(8, 4, 8), CFrame = at(-15, 2, 2), Color = C.Yellow, Material = Enum.Material.DiamondPlate })
+	Builder.part(model, { Name = "CrusherPress", Size = Vector3.new(7, 2, 7), CFrame = at(-15, 9, 2), Color = C.DarkSteel, Material = Enum.Material.Metal })
+	for _, x in { -18, -12 } do
+		Builder.part(model, { Name = "CrusherPillar", Size = Vector3.new(1, 10, 1), CFrame = at(x, 6, 5.5), Color = C.DarkSteel, Material = Enum.Material.Metal })
+	end
+	Builder.part(model, { Name = "CrushedCube", Size = Vector3.new(3, 2.5, 3), CFrame = at(-15, 5.25, 2) * CFrame.Angles(0, 0.3, 0), Color = C.Rust, Material = Enum.Material.CorrodedMetal })
+
+	local anchor = Builder.part(model, {
+		Name = "PromptAnchor",
+		Size = Vector3.new(2, 2, 2),
+		CFrame = at(0, 3, -3.5),
+		Transparency = 1,
+		CanCollide = false,
+	})
+	Builder.prompt(anchor, "SellPrompt", "Sell All Scrap", "Scrap Buyer", 0.3, 12)
+	Builder.billboard(anchor, "SELL", C.Green, 16)
+	CollectionService:AddTag(model, "SellStation")
+end
+
+local function upgradeShop(parent: Instance)
+	local model = Builder.model(parent, "UpgradeShop")
+	local base = CFrame.new(48, 0, 70) * CFrame.Angles(0, math.rad(90), 0) -- faces -X (towards the plaza)
+	local function at(x: number, y: number, z: number): CFrame
+		return base * CFrame.new(x, y, z)
+	end
+
+	Builder.part(model, { Name = "Floor", Size = Vector3.new(20, 0.6, 16), CFrame = at(0, 0.3, 2), Color = C.Concrete, Material = Enum.Material.Concrete })
+	Builder.part(model, { Name = "BackWall", Size = Vector3.new(20, 13, 1), CFrame = at(0, 6.5, 9.5), Color = C.Blue, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(-9.5, 6.5, 2), Color = C.Blue, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "SideWall", Size = Vector3.new(1, 13, 16), CFrame = at(9.5, 6.5, 2), Color = C.Blue, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "Roof", Size = Vector3.new(22, 1, 18), CFrame = at(0, 13.5, 2), Color = C.DarkSteel, Material = Enum.Material.Metal })
+	-- Striped awning over the front.
+	for i = 0, 5 do
+		Builder.part(model, {
+			Name = "Awning",
+			Size = Vector3.new(22 / 6, 0.4, 5),
+			CFrame = at(-11 + 22 / 12 + i * 22 / 6, 12, -8) * CFrame.Angles(math.rad(-20), 0, 0),
+			Color = if i % 2 == 0 then C.Yellow else C.White,
+			Material = Enum.Material.Fabric,
+		})
+	end
+	Builder.part(model, { Name = "Counter", Size = Vector3.new(14, 3.5, 2.5), CFrame = at(0, 1.75, -4), Color = C.DarkSteel, Material = Enum.Material.Wood })
+	-- Display rack of tools on the back wall.
+	for i, color in { Color3.fromRGB(140, 90, 60), C.Steel, Color3.fromRGB(200, 50, 50), C.Yellow, Color3.fromRGB(80, 220, 255) } do
+		Builder.part(model, {
+			Name = "DisplayTool",
+			Size = Vector3.new(0.6, 5, 0.6),
+			CFrame = at(-6 + (i - 1) * 3, 6, 8.8) * CFrame.Angles(0, 0, math.rad(15)),
+			Color = color,
+			Material = if i == 5 then Enum.Material.Neon else Enum.Material.Metal,
+		})
+	end
+	Builder.sign(model, "UPGRADE SHOP", (at(0, 16.5, -6)).Position, base.LookVector, Vector2.new(18, 4.5), C.Blue, C.Yellow)
+
+	local anchor = Builder.part(model, {
+		Name = "PromptAnchor",
+		Size = Vector3.new(2, 2, 2),
+		CFrame = at(0, 3, -5.5),
+		Transparency = 1,
+		CanCollide = false,
+	})
+	Builder.prompt(anchor, "ShopPrompt", "Open Shop", "Upgrade Shop", 0, 12)
+	Builder.billboard(anchor, "UPGRADES", C.Yellow, 17)
+	CollectionService:AddTag(model, "UpgradeShop")
+end
+
+-- A collectable pile: a dirt mound plus loose junk, with a prompt in the middle.
+local function scrapPile(parent: Instance, position: Vector3, zoneName: string, zoneLuck: number)
+	local model = Builder.model(parent, "ScrapPile")
+	model:SetAttribute("ZoneName", zoneName)
+	model:SetAttribute("ZoneLuck", zoneLuck)
+
+	local mound = Builder.part(model, {
+		Name = "Mound",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(9, 9, 9),
+		CFrame = CFrame.new(position + Vector3.new(0, -3, 0)),
+		Color = Color3.fromRGB(95, 78, 60),
+		Material = Enum.Material.Ground,
+	})
+	mound:SetAttribute("Persistent", true)
+
+	for _ = 1, rng:NextInteger(5, 7) do
+		local offset = Vector3.new(rng:NextNumber(-2.5, 2.5), rng:NextNumber(1, 2.6), rng:NextNumber(-2.5, 2.5))
+		local rotation = CFrame.Angles(rng:NextNumber(-0.8, 0.8), rng:NextNumber(0, math.pi * 2), rng:NextNumber(-0.8, 0.8))
+		local color = JUNK_COLORS[rng:NextInteger(1, #JUNK_COLORS)]
+		local kind = rng:NextInteger(1, 3)
+		if kind == 1 then
+			Builder.part(model, {
+				Name = "Plate",
+				Size = Vector3.new(rng:NextNumber(1.5, 3), 0.3, rng:NextNumber(1.5, 3.5)),
+				CFrame = CFrame.new(position + offset) * rotation,
+				Color = color,
+				Material = Enum.Material.CorrodedMetal,
+				CanCollide = false,
+			})
+		elseif kind == 2 then
+			Builder.part(model, {
+				Name = "Pipe",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(rng:NextNumber(2, 4), 0.6, 0.6),
+				CFrame = CFrame.new(position + offset) * rotation,
+				Color = color,
+				Material = Enum.Material.Metal,
+				CanCollide = false,
+			})
+		else
+			Builder.part(model, {
+				Name = "Chunk",
+				Size = Vector3.new(rng:NextNumber(0.8, 1.6), rng:NextNumber(0.8, 1.6), rng:NextNumber(0.8, 1.6)),
+				CFrame = CFrame.new(position + offset) * rotation,
+				Color = color,
+				Material = Enum.Material.DiamondPlate,
+				CanCollide = false,
+			})
+		end
+	end
+
+	local anchor = Builder.part(model, {
+		Name = "PromptAnchor",
+		Size = Vector3.new(1, 1, 1),
+		CFrame = CFrame.new(position + Vector3.new(0, 2.5, 0)),
+		Transparency = 1,
+		CanCollide = false,
+	})
+	model.PrimaryPart = anchor
+	Builder.prompt(anchor, "CollectPrompt", "Collect", zoneName, 0.5, 10)
+
+	-- A faint sparkle so piles read as interactive from a distance.
+	local sparkle = Instance.new("ParticleEmitter")
+	sparkle.Name = "Glint"
+	sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	sparkle.Rate = 1.5
+	sparkle.Lifetime = NumberRange.new(0.8, 1.4)
+	sparkle.Speed = NumberRange.new(0.5, 1)
+	sparkle.Size = NumberSequence.new(0.6)
+	sparkle.LightEmission = 1
+	sparkle.Color = ColorSequence.new(Color3.fromRGB(255, 230, 150))
+	sparkle.SpreadAngle = Vector2.new(180, 180)
+	sparkle.Parent = anchor
+
+	CollectionService:AddTag(model, "ScrapPile")
+end
+
+local function rustyCar(parent: Instance, cframe: CFrame, missingWheel: boolean)
+	local model = Builder.model(parent, "RustyCar")
+	local color = CAR_COLORS[rng:NextInteger(1, #CAR_COLORS)]
+	local function at(x: number, y: number, z: number): CFrame
+		return cframe * CFrame.new(x, y, z)
+	end
+	Builder.part(model, { Name = "Body", Size = Vector3.new(6, 2.2, 12), CFrame = at(0, 1.9, 0), Color = color, Material = Enum.Material.CorrodedMetal })
+	Builder.part(model, { Name = "Cabin", Size = Vector3.new(5.4, 2, 5.5), CFrame = at(0, 4, 0.8), Color = color, Material = Enum.Material.CorrodedMetal })
+	Builder.part(model, { Name = "Windows", Size = Vector3.new(5.5, 1.3, 5.6), CFrame = at(0, 4.2, 0.8), Color = Color3.fromRGB(40, 50, 55), Material = Enum.Material.Glass, Transparency = 0.3 })
+	Builder.part(model, { Name = "Bumper", Size = Vector3.new(6.2, 0.6, 0.6), CFrame = at(0, 1.2, -6.1), Color = C.DarkSteel, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "RustPatch", Size = Vector3.new(6.05, 1, 3), CFrame = at(0, 2.2, -3), Color = C.Rust, Material = Enum.Material.CorrodedMetal })
+	for _, x in { -3, 3 } do
+		for _, z in { -3.8, 3.8 } do
+			if not (missingWheel and x == 3 and z == -3.8) then
+				Builder.part(model, {
+					Name = "Wheel",
+					Shape = Enum.PartType.Cylinder,
+					Size = Vector3.new(1, 2.4, 2.4),
+					CFrame = at(x, 1.2, z),
+					Color = C.Black,
+					Material = Enum.Material.SmoothPlastic,
+				})
+			end
+		end
+	end
+end
+
+local function barrel(parent: Instance, position: Vector3, color: Color3, tipped: boolean)
+	if tipped then
+		Builder.part(parent, {
+			Name = "Barrel",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(3.6, 2.6, 2.6),
+			CFrame = CFrame.new(position + Vector3.new(0, 1.3, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi), 0),
+			Color = color,
+			Material = Enum.Material.CorrodedMetal,
+		})
+	else
+		Builder.cylinder(parent, "Barrel", position + Vector3.new(0, 1.8, 0), 3.6, 2.6, color, Enum.Material.CorrodedMetal)
+	end
+end
+
+local function tireStack(parent: Instance, position: Vector3, height: number)
+	for i = 0, height - 1 do
+		Builder.part(parent, {
+			Name = "Tire",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(1, 3.2, 3.2),
+			CFrame = CFrame.new(position + Vector3.new(rng:NextNumber(-0.2, 0.2), 0.5 + i, rng:NextNumber(-0.2, 0.2)))
+				* CFrame.Angles(0, 0, math.rad(90)),
+			Color = C.Black,
+			Material = Enum.Material.SmoothPlastic,
+		})
+	end
+end
+
+local function container(parent: Instance, cframe: CFrame, color: Color3)
+	local model = Builder.model(parent, "ShippingContainer")
+	Builder.part(model, { Name = "Box", Size = Vector3.new(8, 8.5, 20), CFrame = cframe * CFrame.new(0, 4.25, 0), Color = color, Material = Enum.Material.CorrodedMetal })
+	for _, x in { -4.05, 4.05 } do
+		for z = -8, 8, 4 do
+			Builder.part(model, { Name = "Rib", Size = Vector3.new(0.2, 8, 0.6), CFrame = cframe * CFrame.new(x, 4.25, z), Color = color:Lerp(Color3.new(0, 0, 0), 0.25), Material = Enum.Material.Metal })
+		end
+	end
+	Builder.part(model, { Name = "Doors", Size = Vector3.new(7.6, 8, 0.2), CFrame = cframe * CFrame.new(0, 4.25, 10.05), Color = color:Lerp(Color3.new(0, 0, 0), 0.15), Material = Enum.Material.Metal })
+end
+
+local function crane(parent: Instance, position: Vector3)
+	local model = Builder.model(parent, "Crane")
+	Builder.part(model, { Name = "Base", Size = Vector3.new(10, 3, 10), CFrame = CFrame.new(position + Vector3.new(0, 1.5, 0)), Color = C.Yellow, Material = Enum.Material.DiamondPlate })
+	Builder.part(model, { Name = "Mast", Size = Vector3.new(3, 34, 3), CFrame = CFrame.new(position + Vector3.new(0, 20, 0)), Color = C.Yellow, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "Cab", Size = Vector3.new(5, 4, 5), CFrame = CFrame.new(position + Vector3.new(0, 36, 2)), Color = C.Yellow, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "Jib", Size = Vector3.new(2, 2, 34), CFrame = CFrame.new(position + Vector3.new(0, 39, 12)), Color = C.Yellow, Material = Enum.Material.Metal })
+	Builder.part(model, { Name = "Counterweight", Size = Vector3.new(4, 4, 5), CFrame = CFrame.new(position + Vector3.new(0, 38, -5)), Color = C.DarkSteel, Material = Enum.Material.Concrete })
+	Builder.part(model, { Name = "Cable", Size = Vector3.new(0.2, 18, 0.2), CFrame = CFrame.new(position + Vector3.new(0, 29, 26)), Color = C.Black, Material = Enum.Material.Metal, CanCollide = false })
+	Builder.cylinder(model, "Magnet", position + Vector3.new(0, 19.5, 26), 1.2, 6, C.DarkSteel, Enum.Material.Metal)
+	-- A car dangling from the magnet.
+	rustyCar(model, CFrame.new(position + Vector3.new(0, 14.5, 26)) * CFrame.Angles(math.rad(8), math.rad(30), math.rad(5)), true)
+end
+
+local function zoneSign(parent: Instance, text: string, position: Vector3, facing: Vector3, color: Color3)
+	Builder.cylinder(parent, "SignPost", position + Vector3.new(0, 3, 0), 6, 0.6, C.DarkSteel, Enum.Material.Metal)
+	Builder.sign(parent, text, position + Vector3.new(0, 7, 0), facing, Vector2.new(13, 3.5), color, C.White)
+end
+
+local function frontHeap(parent: Instance)
+	local folder = Builder.folder(parent, "Zone_FrontHeap")
+	local center = Vector3.new(0, 0, 0)
+	for i = 1, 6 do
+		local angle = (i / 6) * math.pi * 2 + 0.3
+		scrapPile(folder, center + Vector3.new(math.cos(angle) * 18, 0, math.sin(angle) * 18), "Front Heap", 1)
+	end
+	-- A big central junk heap that is just scenery.
+	Builder.part(folder, {
+		Name = "BigHeap",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(14, 14, 14),
+		CFrame = CFrame.new(center + Vector3.new(0, -3, 0)),
+		Color = Color3.fromRGB(90, 72, 55),
+		Material = Enum.Material.Ground,
+	})
+	barrel(folder, center + Vector3.new(2, 3.5, 1), C.Blue, true)
+	tireStack(folder, center + Vector3.new(-2, 3.5, -1), 2)
+	zoneSign(folder, "FRONT HEAP", Vector3.new(9, 0, 30), Vector3.new(0, 0, 1), C.DarkRust)
+end
+
+local function carGraveyard(parent: Instance)
+	local folder = Builder.folder(parent, "Zone_CarGraveyard")
+	local center = Vector3.new(-100, 0, -40)
+	local pilePositions = {
+		Vector3.new(-14, 0, 18),
+		Vector3.new(14, 0, 14),
+		Vector3.new(-22, 0, -8),
+		Vector3.new(20, 0, -14),
+		Vector3.new(-4, 0, -26),
+		Vector3.new(4, 0, 2),
+	}
+	for _, offset in pilePositions do
+		scrapPile(folder, center + offset, "Car Graveyard", 1.15)
+	end
+	local carSpots = {
+		{ Vector3.new(-32, 0, 28), 20, false },
+		{ Vector3.new(-36, 0, 0), 95, true },
+		{ Vector3.new(30, 0, 30), -35, false },
+		{ Vector3.new(34, 0, -34), 60, true },
+		{ Vector3.new(-26, 0, -38), 150, false },
+		{ Vector3.new(12, 0, -40), -10, false },
+	}
+	for _, spot in carSpots do
+		local offset, yaw, missing = spot[1] :: Vector3, spot[2] :: number, spot[3] :: boolean
+		rustyCar(folder, CFrame.new(center + offset) * CFrame.Angles(0, math.rad(yaw), math.rad(if missing then 4 else 0)), missing)
+	end
+	-- Stacked wreck.
+	rustyCar(folder, CFrame.new(center + Vector3.new(-36, 5.1, 0)) * CFrame.Angles(0, math.rad(80), math.rad(-3)), false)
+	tireStack(folder, center + Vector3.new(0, 0, 32), 4)
+	tireStack(folder, center + Vector3.new(4, 0, 34), 3)
+	tireStack(folder, center + Vector3.new(26, 0, 4), 2)
+	zoneSign(folder, "CAR GRAVEYARD", Vector3.new(-72, 0, -2), Vector3.new(1, 0, 0.6), C.DarkRust)
+end
+
+local function backLot(parent: Instance)
+	local folder = Builder.folder(parent, "Zone_BackLot")
+	local center = Vector3.new(100, 0, -100)
+	local pilePositions = {
+		Vector3.new(-18, 0, 14),
+		Vector3.new(10, 0, 22),
+		Vector3.new(-20, 0, -14),
+		Vector3.new(4, 0, -4),
+		Vector3.new(24, 0, -2),
+		Vector3.new(-6, 0, -28),
+	}
+	for _, offset in pilePositions do
+		scrapPile(folder, center + offset, "Back Lot", 1.35)
+	end
+	crane(folder, center + Vector3.new(40, 0, -30))
+	local containerColors = { Color3.fromRGB(180, 60, 50), Color3.fromRGB(40, 100, 160), Color3.fromRGB(60, 130, 80), Color3.fromRGB(200, 140, 40) }
+	container(folder, CFrame.new(center + Vector3.new(52, 0, 30)), containerColors[1])
+	container(folder, CFrame.new(center + Vector3.new(52, 0, 52)), containerColors[2])
+	container(folder, CFrame.new(center + Vector3.new(52, 8.5, 40)), containerColors[3])
+	container(folder, CFrame.new(center + Vector3.new(-30, 0, -50)) * CFrame.Angles(0, math.rad(90), 0), containerColors[4])
+	zoneSign(folder, "BACK LOT  (rare finds!)", Vector3.new(72, 0, -56), Vector3.new(-0.6, 0, 1), Color3.fromRGB(110, 60, 170))
+end
+
+local function decorations(parent: Instance)
+	local folder = Builder.folder(parent, "Decorations")
+	-- Containers lining the west fence.
+	local colors = { Color3.fromRGB(180, 60, 50), Color3.fromRGB(40, 100, 160), Color3.fromRGB(60, 130, 80) }
+	for i, z in { 120, 90, -100, -130 } do
+		container(folder, CFrame.new(-MAP_HALF + 6, 0, z), colors[(i - 1) % #colors + 1])
+	end
+	-- Barrel clusters.
+	local barrelColors = { C.Blue, Color3.fromRGB(190, 50, 40), C.Yellow, Color3.fromRGB(60, 120, 60) }
+	local clusters = {
+		Vector3.new(-62, 0, 92),
+		Vector3.new(62, 0, 92),
+		Vector3.new(-30, 0, 140),
+		Vector3.new(140, 0, 40),
+		Vector3.new(-140, 0, 40),
+		Vector3.new(30, 0, -60),
+	}
+	for _, center in clusters do
+		for _ = 1, rng:NextInteger(3, 5) do
+			local offset = Vector3.new(rng:NextNumber(-4, 4), 0, rng:NextNumber(-4, 4))
+			barrel(folder, center + offset, barrelColors[rng:NextInteger(1, #barrelColors)], rng:NextNumber() < 0.25)
+		end
+	end
+	-- Loose tires, placed by hand so they never block the road, plaza or piles.
+	local tires = {
+		Vector3.new(-28, 0, 120),
+		Vector3.new(30, 0, 150),
+		Vector3.new(-60, 0, 30),
+		Vector3.new(55, 0, 20),
+		Vector3.new(-120, 0, 80),
+		Vector3.new(120, 0, 90),
+		Vector3.new(-30, 0, -100),
+		Vector3.new(0, 0, -140),
+		Vector3.new(150, 0, -20),
+		Vector3.new(-150, 0, -10),
+		Vector3.new(80, 0, 150),
+		Vector3.new(-90, 0, 150),
+	}
+	for i, pos in tires do
+		if i % 2 == 0 then
+			tireStack(folder, pos, rng:NextInteger(1, 3))
+		else
+			Builder.part(folder, {
+				Name = "Tire",
+				Shape = Enum.PartType.Cylinder,
+				Size = Vector3.new(1, 3.2, 3.2),
+				CFrame = CFrame.new(pos + Vector3.new(0, 1.5, 0)) * CFrame.Angles(0, rng:NextNumber(0, math.pi), math.rad(10)),
+				Color = C.Black,
+				Material = Enum.Material.SmoothPlastic,
+			})
+		end
+	end
+	-- Extra parked wrecks near the entrance road.
+	rustyCar(folder, CFrame.new(-40, 0, 140) * CFrame.Angles(0, math.rad(75), 0), false)
+	rustyCar(folder, CFrame.new(44, 0, 130) * CFrame.Angles(0, math.rad(-100), 0), true)
+	-- Scrap mountains in the corners for silhouette.
+	for _, pos in { Vector3.new(-140, 0, -145), Vector3.new(145, 0, 140), Vector3.new(-145, 0, 150) } do
+		Builder.part(folder, {
+			Name = "ScrapMountain",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(40, 40, 40),
+			CFrame = CFrame.new(pos + Vector3.new(0, -8, 0)),
+			Color = Color3.fromRGB(85, 70, 58),
+			Material = Enum.Material.Ground,
+		})
+	end
+end
+
+function MapBuilder.setupLighting()
+	Lighting.ClockTime = 16.2
+	Lighting.GeographicLatitude = 35
+	Lighting.Brightness = 2.6
+	Lighting.Ambient = Color3.fromRGB(70, 60, 55)
+	Lighting.OutdoorAmbient = Color3.fromRGB(140, 125, 110)
+	Lighting.EnvironmentDiffuseScale = 0.5
+	Lighting.EnvironmentSpecularScale = 0.5
+	Lighting.GlobalShadows = true
+
+	local function ensure(className: string, name: string): Instance
+		local existing = Lighting:FindFirstChild(name)
+		if existing and existing.ClassName == className then
+			return existing
+		end
+		local instance = Instance.new(className)
+		instance.Name = name
+		instance.Parent = Lighting
+		return instance
+	end
+
+	local sky = ensure("Sky", "Sky") :: Sky
+	sky.SunAngularSize = 14
+	sky.MoonAngularSize = 8
+
+	local atmosphere = ensure("Atmosphere", "Atmosphere") :: Atmosphere
+	atmosphere.Density = 0.32
+	atmosphere.Offset = 0.15
+	atmosphere.Color = Color3.fromRGB(230, 200, 170)
+	atmosphere.Decay = Color3.fromRGB(150, 110, 90)
+	atmosphere.Glare = 0.4
+	atmosphere.Haze = 1.2
+
+	local bloom = ensure("BloomEffect", "Bloom") :: BloomEffect
+	bloom.Intensity = 0.6
+	bloom.Size = 24
+	bloom.Threshold = 1.6
+
+	local color = ensure("ColorCorrectionEffect", "ColorCorrection") :: ColorCorrectionEffect
+	color.Saturation = 0.15
+	color.Contrast = 0.08
+	color.TintColor = Color3.fromRGB(255, 245, 235)
+
+	local rays = ensure("SunRaysEffect", "SunRays") :: SunRaysEffect
+	rays.Intensity = 0.06
+	rays.Spread = 0.6
+end
+
+function MapBuilder.build(): Model
+	local existing = Workspace:FindFirstChild("Junkyard")
+	if existing and existing:IsA("Model") then
+		return existing
+	end
+
+	local map = Instance.new("Model")
+	map.Name = "Junkyard"
+
+	ground(map)
+	perimeterFence(map)
+	entrance(map)
+	paths(map)
+	hub(map)
+	sellStation(map)
+	upgradeShop(map)
+	frontHeap(map)
+	carGraveyard(map)
+	backLot(map)
+	decorations(map)
+
+	map.Parent = Workspace
+	MapBuilder.setupLighting()
+	return map
+end
+
+return MapBuilder
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="StarterPlayer" referent="17">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="18">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="Folder" referent="19">
+        <Properties>
+          <string name="Name">Client</string>
+        </Properties>
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">Effects</string>
+            <string name="Source"><![CDATA[--!strict
+-- Purely cosmetic, local-only feedback: sounds, particle bursts, flying scrap and
+-- floating text. Nothing here affects game state.
+
+local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+
+local Effects = {}
+
+local soundCache: { [string]: Sound } = {}
+
+function Effects.playSound(id: string, pitch: number?)
+	if id == "" then
+		return
+	end
+	local sound = soundCache[id]
+	if not sound then
+		sound = Instance.new("Sound")
+		sound.SoundId = id
+		sound.Volume = 0.6
+		sound.Parent = SoundService
+		soundCache[id] = sound
+	end
+	sound.PlaybackSpeed = pitch or 1
+	SoundService:PlayLocalSound(sound)
+end
+
+local function effectsFolder(): Folder
+	local folder = Workspace:FindFirstChild("LocalEffects")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "LocalEffects"
+		folder.Parent = Workspace
+	end
+	return folder :: Folder
+end
+
+local function burst(position: Vector3, color: Color3, amount: number)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.Transparency = 1
+	part.Size = Vector3.one
+	part.Position = position
+	part.Parent = effectsFolder()
+
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	emitter.Color = ColorSequence.new(color)
+	emitter.LightEmission = 0.8
+	emitter.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.8), NumberSequenceKeypoint.new(1, 0) })
+	emitter.Speed = NumberRange.new(8, 16)
+	emitter.SpreadAngle = Vector2.new(70, 70)
+	emitter.Lifetime = NumberRange.new(0.4, 0.8)
+	emitter.Acceleration = Vector3.new(0, -30, 0)
+	emitter.EmissionDirection = Enum.NormalId.Top
+	emitter.Rate = 0
+	emitter.Parent = part
+	emitter:Emit(amount)
+	Debris:AddItem(part, 1.5)
+end
+
+-- A small chunk of scrap that hops from the pile into the player.
+local function flyingChunk(from: Vector3, root: BasePart, color: Color3, delayTime: number)
+	task.delay(delayTime, function()
+		local chunk = Instance.new("Part")
+		chunk.Anchored = true
+		chunk.CanCollide = false
+		chunk.CanQuery = false
+		chunk.Size = Vector3.new(0.8, 0.8, 0.8)
+		chunk.Color = color
+		chunk.Material = Enum.Material.Neon
+		chunk.CFrame = CFrame.new(from)
+		chunk.Parent = effectsFolder()
+
+		local start = os.clock()
+		local duration = 0.45
+		local connection
+		connection = RunService.RenderStepped:Connect(function()
+			local t = math.min((os.clock() - start) / duration, 1)
+			local target = root.Position
+			local arc = Vector3.new(0, math.sin(t * math.pi) * 4, 0)
+			chunk.CFrame = CFrame.new(from:Lerp(target, t) + arc) * CFrame.Angles(t * 6, t * 4, 0)
+			chunk.Size = Vector3.one * (0.8 * (1 - t * 0.6))
+			if t >= 1 then
+				connection:Disconnect()
+				chunk:Destroy()
+			end
+		end)
+	end)
+end
+
+local function floatingText(position: Vector3, text: string, color: Color3, big: boolean, delayTime: number)
+	task.delay(delayTime, function()
+		local anchor = Instance.new("Part")
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.Transparency = 1
+		anchor.Size = Vector3.one
+		anchor.Position = position
+		anchor.Parent = effectsFolder()
+
+		local gui = Instance.new("BillboardGui")
+		gui.Size = UDim2.fromOffset(if big then 320 else 220, if big then 60 else 40)
+		gui.AlwaysOnTop = true
+		gui.LightInfluence = 0
+		gui.Parent = anchor
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.Text = text
+		label.TextColor3 = color
+		label.Parent = gui
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = 2.5
+		stroke.Parent = label
+
+		local info = TweenInfo.new(1.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		TweenService:Create(anchor, info, { Position = position + Vector3.new(0, 5, 0) }):Play()
+		TweenService:Create(label, TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, 0, false, 0.8), { TextTransparency = 1 }):Play()
+		TweenService:Create(stroke, TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.In, 0, false, 0.8), { Transparency = 1 }):Play()
+		Debris:AddItem(anchor, 1.4)
+	end)
+end
+
+-- Called when the server confirms a collection.
+function Effects.collected(itemIds: { string }, position: Vector3, collectSound: string)
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	local bestTier = 0
+	for i, id in itemIds do
+		local scrap = Formulas.getScrapType(id)
+		if scrap then
+			local delayTime = (i - 1) * 0.12
+			local isRare = scrap.Tier >= 3
+			local text = if isRare then `RARE! +1 {scrap.Name}` else `+1 {scrap.Name}`
+			floatingText(position + Vector3.new(0, 2 + (i - 1) * 1.5, 0), text, scrap.Color, scrap.Tier >= 2, delayTime)
+			if root and root:IsA("BasePart") then
+				flyingChunk(position, root, scrap.Color, delayTime)
+			end
+			burst(position, scrap.Color, 10 + scrap.Tier * 10)
+			bestTier = math.max(bestTier, scrap.Tier)
+		end
+	end
+	Effects.playSound(collectSound, 1 + bestTier * 0.15)
+end
+
+return Effects
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="LocalScript" referent="21">
+          <Properties>
+            <string name="Name">Main</string>
+            <string name="Source"><![CDATA[--!strict
+-- Client entry point: builds the UI, listens for server updates and plays effects.
+-- The client never decides anything about money or items; it only renders state.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local Effects = require(script.Parent.Effects)
+local Hud = require(script.Parent.UI.Hud)
+local Notifications = require(script.Parent.UI.Notifications)
+local Shop = require(script.Parent.UI.Shop)
+
+local player = Players.LocalPlayer
+
+local screen = Instance.new("ScreenGui")
+screen.Name = "JunkyardUI"
+screen.ResetOnSpawn = false
+screen.IgnoreGuiInset = false
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = player:WaitForChild("PlayerGui")
+
+local hud = Hud.new(screen)
+Notifications.init(screen)
+Shop.init(screen)
+
+-- Collect prompts hold for as long as the player's cooldown, so the Collection
+-- Speed upgrade is felt directly. The server enforces the real cooldown.
+local holdDuration = Config.Gameplay.BaseCooldown
+
+local function applyHold(prompt: Instance)
+	if prompt:IsA("ProximityPrompt") and prompt.Name == "CollectPrompt" then
+		prompt.HoldDuration = holdDuration
+	end
+end
+
+local function applyHoldToAll()
+	for _, descendant in Workspace:GetDescendants() do
+		applyHold(descendant)
+	end
+end
+Workspace.DescendantAdded:Connect(applyHold)
+
+local lastState: any = nil
+
+local function onState(state: any)
+	if not state then
+		return
+	end
+	lastState = state
+	hud:update(state)
+	Shop.setState(state)
+	if state.Cooldown ~= holdDuration then
+		holdDuration = state.Cooldown
+		applyHoldToAll()
+	end
+end
+
+Remotes.event("StateChanged").OnClientEvent:Connect(onState)
+Remotes.event("Notify").OnClientEvent:Connect(function(message: string, kind: string?)
+	Notifications.toast(message, kind)
+	if kind == "error" then
+		Effects.playSound(Config.Sounds.Error)
+	end
+end)
+Remotes.event("Collected").OnClientEvent:Connect(function(items: { string }, position: Vector3)
+	Effects.collected(items, position, Config.Sounds.Collect)
+end)
+Remotes.event("Sold").OnClientEvent:Connect(function(total: number, count: number, breakdown)
+	Notifications.sale(total, count, breakdown)
+	Effects.playSound(Config.Sounds.Sell)
+end)
+Remotes.event("OpenShop").OnClientEvent:Connect(function()
+	Shop.open()
+end)
+
+-- The profile may still be loading; StateChanged will arrive once it is.
+task.spawn(function()
+	local ok, state = pcall(function()
+		return Remotes.func("GetState"):InvokeServer()
+	end)
+	if ok and state and not lastState then
+		onState(state)
+	end
+end)
+applyHoldToAll()
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="Folder" referent="22">
+          <Properties>
+            <string name="Name">UI</string>
+          </Properties>
+          <Item class="ModuleScript" referent="23">
+            <Properties>
+              <string name="Name">Hud</string>
+              <string name="Source"><![CDATA[--!strict
+-- Always-on HUD: cash, backpack capacity, carried scrap breakdown and a context hint.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Theme = require(script.Parent.Theme)
+
+local Hud = {}
+Hud.__index = Hud
+
+export type Hud = typeof(setmetatable(
+	{} :: {
+		cashLabel: TextLabel,
+		capacityLabel: TextLabel,
+		capacityFill: Frame,
+		toolLabel: TextLabel,
+		rows: { [string]: TextLabel },
+		hint: TextLabel,
+		shownCash: number,
+		cashTween: Tween?,
+		cashValue: NumberValue,
+	},
+	Hud
+))
+
+function Hud.new(screen: ScreenGui): Hud
+	local C = Theme.Colors
+
+	local panel = Theme.create("Frame", {
+		Name = "StatsPanel",
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 12, 0.5, 0),
+		Size = UDim2.fromOffset(230, 260),
+		BackgroundColor3 = C.Panel,
+		BackgroundTransparency = 0.1,
+		Parent = screen,
+	}, { Theme.corner(14), Theme.stroke(3), Theme.padding(12) })
+
+	local cashLabel = Theme.label({
+		Name = "Cash",
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "$0",
+		Font = Theme.TitleFont,
+		TextColor3 = C.Cash,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		MaxTextSize = 36,
+		Parent = panel,
+	})
+	Theme.textStroke().Parent = cashLabel
+
+	local capacityLabel = Theme.label({
+		Name = "CapacityText",
+		Position = UDim2.fromOffset(0, 46),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = "Backpack 0/10",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		MaxTextSize = 18,
+		Parent = panel,
+	})
+
+	local bar = Theme.create("Frame", {
+		Name = "CapacityBar",
+		Position = UDim2.fromOffset(0, 70),
+		Size = UDim2.new(1, 0, 0, 16),
+		BackgroundColor3 = C.PanelLight,
+		Parent = panel,
+	}, { Theme.corner(8) })
+	local fill = Theme.create("Frame", {
+		Name = "Fill",
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = C.Good,
+		Parent = bar,
+	}, { Theme.corner(8) })
+
+	local rows: { [string]: TextLabel } = {}
+	for i, scrap in Config.ScrapTypes do
+		local row = Theme.create("Frame", {
+			Name = scrap.Id,
+			Position = UDim2.fromOffset(0, 94 + (i - 1) * 26),
+			Size = UDim2.new(1, 0, 0, 22),
+			BackgroundTransparency = 1,
+			Parent = panel,
+		})
+		Theme.create("Frame", {
+			Name = "Swatch",
+			AnchorPoint = Vector2.new(0, 0.5),
+			Position = UDim2.fromScale(0, 0.5),
+			Size = UDim2.fromOffset(14, 14),
+			BackgroundColor3 = scrap.Color,
+			Parent = row,
+		}, { Theme.corner(4) })
+		Theme.label({
+			Name = "Name",
+			Position = UDim2.fromOffset(22, 0),
+			Size = UDim2.new(1, -70, 1, 0),
+			Text = scrap.Name,
+			TextColor3 = C.SubText,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			MaxTextSize = 16,
+			Parent = row,
+		})
+		rows[scrap.Id] = Theme.label({
+			Name = "Count",
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.fromScale(1, 0),
+			Size = UDim2.new(0, 46, 1, 0),
+			Text = "0",
+			TextXAlignment = Enum.TextXAlignment.Right,
+			MaxTextSize = 18,
+			Parent = row,
+		})
+	end
+
+	local toolLabel = Theme.label({
+		Name = "Tool",
+		Position = UDim2.fromOffset(0, 94 + #Config.ScrapTypes * 26 + 6),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = "",
+		TextColor3 = C.Accent,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		MaxTextSize = 16,
+		Parent = panel,
+	})
+
+	local hint = Theme.label({
+		Name = "Hint",
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -110),
+		Size = UDim2.new(0.6, 0, 0, 34),
+		Text = "",
+		Font = Theme.TitleFont,
+		MaxTextSize = 26,
+		Parent = screen,
+	})
+	Theme.textStroke().Parent = hint
+
+	local cashValue = Instance.new("NumberValue")
+	local self = setmetatable({
+		cashLabel = cashLabel,
+		capacityLabel = capacityLabel,
+		capacityFill = fill,
+		toolLabel = toolLabel,
+		rows = rows,
+		hint = hint,
+		shownCash = 0,
+		cashTween = nil :: Tween?,
+		cashValue = cashValue,
+	}, Hud)
+
+	-- Cash counts up smoothly instead of snapping.
+	cashValue.Changed:Connect(function(value)
+		cashLabel.Text = Formulas.formatCash(value)
+	end)
+	return self
+end
+
+local function pop(object: GuiObject)
+	local scale = object:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+	scale.Parent = object
+	scale.Scale = 1.25
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+end
+
+function Hud.update(self: Hud, state: any)
+	local C = Theme.Colors
+
+	if state.Cash ~= self.shownCash then
+		if self.cashTween then
+			self.cashTween:Cancel()
+		end
+		local tween = TweenService:Create(self.cashValue, TweenInfo.new(0.6, Enum.EasingStyle.Quad), { Value = state.Cash })
+		self.cashTween = tween
+		tween:Play()
+		if state.Cash > self.shownCash then
+			pop(self.cashLabel)
+		end
+		self.shownCash = state.Cash
+	end
+
+	local ratio = if state.Capacity > 0 then state.Used / state.Capacity else 0
+	self.capacityLabel.Text = `Backpack {state.Used}/{state.Capacity}`
+	TweenService:Create(self.capacityFill, TweenInfo.new(0.25), {
+		Size = UDim2.fromScale(math.clamp(ratio, 0, 1), 1),
+		BackgroundColor3 = if ratio >= 1 then C.Bad elseif ratio >= 0.7 then C.Accent else C.Good,
+	}):Play()
+	self.capacityLabel.TextColor3 = if ratio >= 1 then C.Bad else C.Text
+
+	for id, label in self.rows do
+		local count = state.Inventory[id] or 0
+		local text = tostring(count)
+		if label.Text ~= text then
+			label.Text = text
+			if count > 0 then
+				pop(label)
+			end
+		end
+	end
+
+	self.toolLabel.Text = `Tool: {state.ToolName}`
+
+	-- Context hint guides the core loop for new players.
+	local cheapest = math.huge
+	for _, upgrade in state.Upgrades do
+		if upgrade.Price and upgrade.Price < cheapest then
+			cheapest = upgrade.Price
+		end
+	end
+	if state.Used >= state.Capacity then
+		self.hint.Text = "Backpack full! Sell at the green SELL station."
+		self.hint.TextColor3 = C.Bad
+	elseif state.Cash >= cheapest and state.Used == 0 then
+		self.hint.Text = "You can afford an upgrade! Visit the blue UPGRADE SHOP."
+		self.hint.TextColor3 = C.Accent
+	elseif state.Used == 0 then
+		self.hint.Text = "Walk up to a scrap pile and hold [E] to collect junk!"
+		self.hint.TextColor3 = C.Text
+	else
+		self.hint.Text = ""
+	end
+end
+
+return Hud
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="24">
+            <Properties>
+              <string name="Name">Notifications</string>
+              <string name="Source"><![CDATA[--!strict
+-- Toast messages and the big sale popup.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Theme = require(script.Parent.Theme)
+
+local Notifications = {}
+
+local MAX_TOASTS = 4
+local container: Frame
+local saleLabel: TextLabel
+local saleDetail: TextLabel
+local saleScale: UIScale
+local saleToken = 0
+local toastCount = 0
+
+function Notifications.init(screen: ScreenGui)
+	container = Theme.create("Frame", {
+		Name = "Toasts",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 12),
+		Size = UDim2.new(0.5, 0, 0, 200),
+		BackgroundTransparency = 1,
+		Parent = screen,
+	}, {
+		Theme.create("UIListLayout", {
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 6),
+		}),
+	})
+
+	local sale = Theme.create("Frame", {
+		Name = "SalePopup",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.35),
+		Size = UDim2.fromOffset(420, 120),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = screen,
+	})
+	saleScale = Theme.create("UIScale", { Parent = sale })
+	saleLabel = Theme.label({
+		Name = "Amount",
+		Size = UDim2.fromScale(1, 0.7),
+		Font = Theme.TitleFont,
+		TextColor3 = Theme.Colors.Cash,
+		MaxTextSize = 80,
+		Parent = sale,
+	})
+	Theme.create("UIStroke", { Thickness = 4, Color = Theme.Colors.Stroke, Parent = saleLabel })
+	saleDetail = Theme.label({
+		Name = "Detail",
+		Position = UDim2.fromScale(0, 0.7),
+		Size = UDim2.fromScale(1, 0.3),
+		MaxTextSize = 22,
+		Parent = sale,
+	})
+	Theme.textStroke().Parent = saleDetail
+end
+
+local KIND_COLORS = {
+	success = Theme.Colors.Good,
+	error = Theme.Colors.Bad,
+	info = Theme.Colors.Info,
+}
+
+function Notifications.toast(message: string, kind: string?)
+	local color = KIND_COLORS[kind or "info"] or Theme.Colors.Info
+
+	local toasts = {}
+	for _, child in container:GetChildren() do
+		if child:IsA("Frame") then
+			table.insert(toasts, child)
+		end
+	end
+	table.sort(toasts, function(a, b)
+		return a.LayoutOrder < b.LayoutOrder
+	end)
+	while #toasts >= MAX_TOASTS do
+		table.remove(toasts, 1):Destroy()
+	end
+
+	toastCount += 1
+	local toast = Theme.create("Frame", {
+		Size = UDim2.new(1, 0, 0, 38),
+		BackgroundColor3 = Theme.Colors.Panel,
+		BackgroundTransparency = 0.1,
+		LayoutOrder = toastCount,
+		Parent = container,
+	}, { Theme.corner(10), Theme.stroke(2, color) })
+	local label = Theme.label({
+		Size = UDim2.new(1, -16, 1, -8),
+		Position = UDim2.fromOffset(8, 4),
+		Text = message,
+		TextColor3 = color,
+		MaxTextSize = 20,
+		Parent = toast,
+	})
+	local scale = Theme.create("UIScale", { Scale = 0.6, Parent = toast })
+	TweenService:Create(scale, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+
+	task.delay(3, function()
+		if toast.Parent then
+			local info = TweenInfo.new(0.4)
+			TweenService:Create(toast, info, { BackgroundTransparency = 1 }):Play()
+			TweenService:Create(label, info, { TextTransparency = 1 }):Play()
+			task.wait(0.4)
+			toast:Destroy()
+		end
+	end)
+end
+
+function Notifications.sale(total: number, count: number, breakdown: { { Id: string, Count: number, Earned: number } })
+	saleToken += 1
+	local token = saleToken
+
+	local parts = {}
+	for _, entry in breakdown do
+		local scrap = Formulas.getScrapType(entry.Id)
+		if scrap then
+			table.insert(parts, `{entry.Count} {scrap.Name}`)
+		end
+	end
+	saleLabel.Text = "+" .. Formulas.formatCash(total)
+	saleDetail.Text = `Sold {count} item{if count == 1 then "" else "s"}: {table.concat(parts, ", ")}`
+
+	local frame = saleLabel.Parent :: Frame
+	frame.Visible = true
+	saleLabel.TextTransparency = 0
+	saleDetail.TextTransparency = 0
+	saleScale.Scale = 0.3
+	TweenService:Create(saleScale, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+
+	task.delay(2.2, function()
+		if token ~= saleToken then
+			return
+		end
+		local info = TweenInfo.new(0.5)
+		TweenService:Create(saleLabel, info, { TextTransparency = 1 }):Play()
+		TweenService:Create(saleDetail, info, { TextTransparency = 1 }):Play()
+		task.wait(0.5)
+		if token == saleToken then
+			frame.Visible = false
+		end
+	end)
+end
+
+return Notifications
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="25">
+            <Properties>
+              <string name="Name">Shop</string>
+              <string name="Source"><![CDATA[--!strict
+-- Upgrade shop window. Buttons send only the upgrade id; the server decides the
+-- price, checks funds and applies the effect, then pushes back the new state.
+
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local Formulas = require(ReplicatedStorage.Shared.Formulas)
+local Remotes = require(ReplicatedStorage.Shared.Remotes)
+local Theme = require(script.Parent.Theme)
+local Notifications = require(script.Parent.Notifications)
+local Effects = require(script.Parent.Parent.Effects)
+
+local Shop = {}
+
+type Card = {
+	level: TextLabel,
+	effect: TextLabel,
+	button: TextButton,
+}
+
+local window: Frame
+local scale: UIScale
+local cashLabel: TextLabel
+local cards: { [string]: Card } = {}
+local state: any = nil
+local pending = false
+local isOpen = false
+
+local function render()
+	if not state or not window then
+		return
+	end
+	local C = Theme.Colors
+	cashLabel.Text = "Cash: " .. Formulas.formatCash(state.Cash)
+	for _, info in state.Upgrades do
+		local card = cards[info.Id]
+		if card then
+			card.level.Text = `Level {info.Level}/{info.MaxLevel}`
+			if info.NextEffect then
+				card.effect.Text = `{info.Effect}  ->  {info.NextEffect}`
+			else
+				card.effect.Text = info.Effect
+			end
+			if not info.Price then
+				card.button.Text = "MAXED"
+				card.button.BackgroundColor3 = C.Accent
+				card.button.AutoButtonColor = false
+			elseif state.Cash >= info.Price then
+				card.button.Text = "Buy " .. Formulas.formatCash(info.Price)
+				card.button.BackgroundColor3 = C.Good
+				card.button.AutoButtonColor = true
+			else
+				card.button.Text = Formulas.formatCash(info.Price)
+				card.button.BackgroundColor3 = C.Disabled
+				card.button.AutoButtonColor = true
+			end
+		end
+	end
+end
+
+local function purchase(id: string)
+	if pending then
+		return
+	end
+	pending = true
+	local ok, success, message = pcall(function()
+		return Remotes.func("PurchaseUpgrade"):InvokeServer(id)
+	end)
+	pending = false
+	if not ok then
+		Notifications.toast("Purchase failed, try again.", "error")
+		Effects.playSound(Config.Sounds.Error)
+		return
+	end
+	Notifications.toast(message, if success then "success" else "error")
+	Effects.playSound(if success then Config.Sounds.Purchase else Config.Sounds.Error)
+end
+
+local function buildCard(parent: Instance, upgrade: Config.UpgradeDef, order: number)
+	local C = Theme.Colors
+	local card = Theme.create("Frame", {
+		Name = upgrade.Id,
+		LayoutOrder = order,
+		Size = UDim2.new(1 / #Config.Upgrades, -10, 1, 0),
+		BackgroundColor3 = C.PanelLight,
+		Parent = parent,
+	}, { Theme.corner(12), Theme.stroke(2), Theme.padding(10) })
+
+	Theme.label({
+		Name = "Title",
+		Size = UDim2.fromScale(1, 0.16),
+		Text = upgrade.Name,
+		Font = Theme.TitleFont,
+		TextColor3 = C.Accent,
+		MaxTextSize = 26,
+		Parent = card,
+	})
+	Theme.label({
+		Name = "Description",
+		Position = UDim2.fromScale(0, 0.18),
+		Size = UDim2.fromScale(1, 0.2),
+		Text = upgrade.Description,
+		TextColor3 = C.SubText,
+		TextWrapped = true,
+		MaxTextSize = 16,
+		Parent = card,
+	})
+	local level = Theme.label({
+		Name = "Level",
+		Position = UDim2.fromScale(0, 0.4),
+		Size = UDim2.fromScale(1, 0.12),
+		Text = "",
+		MaxTextSize = 20,
+		Parent = card,
+	})
+	local effect = Theme.label({
+		Name = "Effect",
+		Position = UDim2.fromScale(0, 0.54),
+		Size = UDim2.fromScale(1, 0.2),
+		Text = "",
+		TextColor3 = C.Cash,
+		TextWrapped = true,
+		MaxTextSize = 18,
+		Parent = card,
+	})
+	local button = Theme.create("TextButton", {
+		Name = "Buy",
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.fromScale(0, 1),
+		Size = UDim2.fromScale(1, 0.2),
+		BackgroundColor3 = C.Good,
+		Font = Theme.TitleFont,
+		Text = "Buy",
+		TextColor3 = C.Text,
+		TextScaled = true,
+		Parent = card,
+	}, { Theme.corner(10), Theme.stroke(2), Theme.create("UITextSizeConstraint", { MaxTextSize = 24 }) })
+	button.Activated:Connect(function()
+		purchase(upgrade.Id)
+	end)
+
+	cards[upgrade.Id] = { level = level, effect = effect, button = button }
+end
+
+function Shop.init(screen: ScreenGui)
+	local C = Theme.Colors
+	window = Theme.create("Frame", {
+		Name = "ShopWindow",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromScale(0.62, 0.55),
+		BackgroundColor3 = C.Panel,
+		Visible = false,
+		Parent = screen,
+	}, {
+		Theme.corner(16),
+		Theme.stroke(4),
+		Theme.padding(14),
+		Theme.create("UISizeConstraint", { MinSize = Vector2.new(340, 300), MaxSize = Vector2.new(820, 420) }),
+	})
+	scale = Theme.create("UIScale", { Parent = window })
+
+	local title = Theme.label({
+		Name = "Title",
+		Size = UDim2.new(1, -60, 0, 40),
+		Text = "UPGRADE SHOP",
+		Font = Theme.TitleFont,
+		TextColor3 = C.Accent,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		MaxTextSize = 36,
+		Parent = window,
+	})
+	Theme.textStroke().Parent = title
+
+	cashLabel = Theme.label({
+		Name = "Cash",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -56, 0, 6),
+		Size = UDim2.new(0.4, 0, 0, 28),
+		Text = "",
+		TextColor3 = C.Cash,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		MaxTextSize = 24,
+		Parent = window,
+	})
+
+	local close = Theme.create("TextButton", {
+		Name = "Close",
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.fromScale(1, 0),
+		Size = UDim2.fromOffset(40, 40),
+		BackgroundColor3 = C.Bad,
+		Font = Theme.TitleFont,
+		Text = "X",
+		TextColor3 = C.Text,
+		TextScaled = true,
+		Parent = window,
+	}, { Theme.corner(10), Theme.stroke(2) })
+	close.Activated:Connect(function()
+		Shop.close()
+	end)
+
+	local list = Theme.create("Frame", {
+		Name = "Cards",
+		Position = UDim2.fromOffset(0, 52),
+		Size = UDim2.new(1, 0, 1, -52),
+		BackgroundTransparency = 1,
+		Parent = window,
+	}, {
+		Theme.create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+			Padding = UDim.new(0, 10),
+		}),
+	})
+	for i, upgrade in Config.Upgrades do
+		buildCard(list, upgrade, i)
+	end
+
+	-- Close automatically when the player walks away from the shop.
+	task.spawn(function()
+		while true do
+			task.wait(0.5)
+			if isOpen then
+				local character = Players.LocalPlayer.Character
+				local root = character and character:FindFirstChild("HumanoidRootPart")
+				local near = false
+				if root and root:IsA("BasePart") then
+					for _, shop in CollectionService:GetTagged("UpgradeShop") do
+						local anchor = shop:FindFirstChild("PromptAnchor")
+						if anchor and anchor:IsA("BasePart") and (anchor.Position - root.Position).Magnitude < Config.Gameplay.ShopRange + 6 then
+							near = true
+						end
+					end
+				end
+				if not near then
+					Shop.close()
+				end
+			end
+		end
+	end)
+end
+
+function Shop.setState(newState: any)
+	state = newState
+	render()
+end
+
+function Shop.open()
+	if isOpen then
+		return
+	end
+	isOpen = true
+	render()
+	window.Visible = true
+	scale.Scale = 0.5
+	TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	Effects.playSound(Config.Sounds.Click)
+end
+
+function Shop.close()
+	if not isOpen then
+		return
+	end
+	isOpen = false
+	window.Visible = false
+end
+
+return Shop
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="26">
+            <Properties>
+              <string name="Name">Theme</string>
+              <string name="Source"><![CDATA[--!strict
+-- Shared colors, fonts and a tiny instance factory for the UI modules.
+
+local Theme = {}
+
+Theme.Colors = {
+	Panel = Color3.fromRGB(32, 30, 36),
+	PanelLight = Color3.fromRGB(48, 45, 54),
+	Stroke = Color3.fromRGB(15, 14, 18),
+	Text = Color3.fromRGB(245, 242, 235),
+	SubText = Color3.fromRGB(185, 180, 170),
+	Cash = Color3.fromRGB(110, 230, 110),
+	Accent = Color3.fromRGB(245, 190, 40),
+	Good = Color3.fromRGB(70, 190, 90),
+	Bad = Color3.fromRGB(220, 70, 60),
+	Disabled = Color3.fromRGB(90, 88, 95),
+	Info = Color3.fromRGB(70, 140, 230),
+}
+
+Theme.TitleFont = Enum.Font.FredokaOne
+Theme.BodyFont = Enum.Font.GothamBold
+
+type Props = { [string]: any }
+
+-- create("Frame", { Size = ... }, { child1, child2 })
+function Theme.create(className: string, props: Props?, children: { Instance }?): any
+	local instance = Instance.new(className)
+	local parent = nil
+	if props then
+		for key, value in props do
+			if key == "Parent" then
+				parent = value
+			else
+				(instance :: any)[key] = value
+			end
+		end
+	end
+	if children then
+		for _, child in children do
+			child.Parent = instance
+		end
+	end
+	if parent then
+		instance.Parent = parent
+	end
+	return instance
+end
+
+function Theme.corner(radius: number?): UICorner
+	return Theme.create("UICorner", { CornerRadius = UDim.new(0, radius or 10) })
+end
+
+function Theme.stroke(thickness: number?, color: Color3?): UIStroke
+	return Theme.create("UIStroke", {
+		Thickness = thickness or 2,
+		Color = color or Theme.Colors.Stroke,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+function Theme.textStroke(): UIStroke
+	return Theme.create("UIStroke", { Thickness = 2, Color = Theme.Colors.Stroke, Transparency = 0.2 })
+end
+
+function Theme.padding(px: number): UIPadding
+	local p = UDim.new(0, px)
+	return Theme.create("UIPadding", { PaddingLeft = p, PaddingRight = p, PaddingTop = p, PaddingBottom = p })
+end
+
+function Theme.label(props: Props): TextLabel
+	local defaults: Props = {
+		BackgroundTransparency = 1,
+		Font = Theme.BodyFont,
+		TextColor3 = Theme.Colors.Text,
+		TextScaled = true,
+	}
+	for key, value in props do
+		if key ~= "MaxTextSize" then
+			defaults[key] = value
+		end
+	end
+	local label = Theme.create("TextLabel", defaults)
+	Theme.create("UITextSizeConstraint", { MaxTextSize = props.MaxTextSize or 28, Parent = label })
+	return label
+end
+
+return Theme
+]]></string>
+            </Properties>
+          </Item>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="27">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+  </Item>
+</roblox>
