@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bakes the generated scrapyard into map/ and rebuilds JunkyardSimulator.rbxlx,
+# Bakes the generated scrapyard into map/ and rebuilds JunkyardSimulator.rbxl,
 # so the place opens in Studio with the map already in Workspace.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
